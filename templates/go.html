@@ -13,8 +13,8 @@
 <body class="centered">
 <main class="wrap narrow">
   <section class="card">
-    <div class="logo">PC</div>
-    <h1>Your PC Check</h1>
+    <div class="logo"><img src="/static/assets/logo.jpg" alt="Eren Guard" width="86" height="86"></div>
+    <h1>Your {{ app_name }}</h1>
     <p>You were asked to run an integrity scan. No code is needed:
        the client just asks for your <strong>Discord ID</strong>.</p>
     <ol class="steps">
@@ -23,7 +23,7 @@
       <li>Type your Discord ID when asked (so the owner knows it is you).</li>
       <li>Wait for the scan to finish, then read the summary.</li>
     </ol>
-    <a class="btn btn-big" href="/download">Download PC Check</a>
+    <a class="btn btn-big" href="/download">Download {{ app_name }}</a>
     <p class="tiny">Nothing is scanned before you press Accept, and only cheat-related
        findings are sent. Declining is always allowed and nothing is reported.</p>
   </section>
