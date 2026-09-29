@@ -96,6 +96,23 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .inv-dir .link { font-weight: 600; }
 .findings td { font-size: 13px; }
 
+/* Messages feed: one card per incoming report, newest first. */
+.msglist { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.msg { background: var(--card-2); border: 1px solid var(--line); border-left: 4px solid var(--dim);
+       border-radius: 12px; padding: 12px 14px; }
+.msg.cheater { border-left-color: #e74c3c; }
+.msg.suspicious { border-left-color: #e67e22; }
+.msg.clean { border-left-color: #2ecc71; }
+.msg.fresh { box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 0 18px rgba(120,160,255,.10); }
+.msghead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+.msghead .code { font-size: 15px; letter-spacing: 1px; }
+.msg p { margin: 4px 0; }
+.msgfiles { list-style: none; padding: 0; margin: 6px 0 0; }
+.msgfiles li { padding: 6px 0; border-top: 1px solid var(--line); }
+.msgfiles code { font-family: Consolas, monospace; font-size: 13px; color: #fff; }
+.msgfiles .badge { margin-right: 6px; }
+.msgfiles .mon { display: block; margin-top: 2px; }
+
 .code {
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 26px; letter-spacing: 5px; font-weight: 700; color: #fff;
