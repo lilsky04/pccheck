@@ -78,7 +78,7 @@
   <section class="card">
     <h2>Recent reports</h2>
     <table id="used">
-      <thead><tr><th>Code</th><th>Player</th><th>Verdict</th><th>Find</th><th>When</th></tr></thead>
+      <thead><tr><th>Code</th><th>Player</th><th>Verdict</th><th>Find</th><th>When</th><th></th></tr></thead>
       <tbody>
       {% for r in used %}
         <tr data-code="{{ r.code }}" class="v-{{ r.verdict|lower }}">
@@ -94,12 +94,46 @@
             {{ f|selectattr('severity','equalto','low')|list|length }}L
           </td>
           <td class="dim" data-used="{{ r.used_at }}"></td>
+          <td class="right"><button class="btn tiny-btn" data-view="{{ r.id }}">View</button></td>
         </tr>
       {% else %}
-        <tr><td colspan="5" class="dim">No reports yet.</td></tr>
+        <tr><td colspan="6" class="dim">No reports yet.</td></tr>
       {% endfor %}
       </tbody>
     </table>
+  </section>
+
+  <section class="card">
+    <h2>Player archive</h2>
+    <p class="tiny">Searchable history of every player check (name, code, check ID, PC name or Discord tag).
+       Results are saved permanently, even after a server restart.</p>
+    <div class="controls">
+      <label>Search
+        <input id="archq" type="text" placeholder="e.g. JohnDoe, T9YHWP, ab12cd34" style="min-width:320px">
+      </label>
+      <button class="btn" type="button" id="archbtn">Search</button>
+    </div>
+    <div id="archres" class="panel"></div>
+    <div id="archdetail" class="panel detail" hidden></div>
+  </section>
+
+  <section class="card">
+    <h2>AnyDisk &mdash; player file list</h2>
+    <p class="tiny">Browse the file names + sizes the player's PC sent after a scan (never the file contents),
+       and look for anything suspicious yourself.</p>
+    <div class="controls">
+      <label>Check ID
+        <input id="invcode" type="text" placeholder="e.g. ab12cd34" style="min-width:200px">
+      </label>
+      <button class="btn" type="button" id="invopen">Open</button>
+      <label>Search inside paths
+        <input id="invq" type="text" placeholder="file name or folder pattern" style="min-width:260px">
+      </label>
+      <button class="btn" type="button" id="invfind">Find</button>
+    </div>
+    <div id="invcrumbs" class="crumbs"></div>
+    <table id="invtable"><thead><tr><th>Name</th><th>Items</th><th>Size</th><th></th></tr></thead><tbody></tbody></table>
+    <p id="invstatus" class="tiny"></p>
   </section>
 </main>
 
@@ -194,6 +228,148 @@ function tick() {
 }
 tick();
 setInterval(tick, 1000);
+
+// ---------- Player archive (search + detail) ----------
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function searchArchive() {
+  const q = $('#archq').value.trim();
+  const res = await fetch('/admin/api/reports?q=' + encodeURIComponent(q) + '&limit=100');
+  const data = await res.json();
+  const box = $('#archres');
+  if (!res.ok || !data.ok) { box.innerHTML = '<p class="bad">' + esc(data.error || ('HTTP ' + res.status)) + '</p>'; return; }
+  if (!data.items.length) { box.innerHTML = '<p class="dim">Nothing found.</p>'; return; }
+  box.innerHTML = '<table><thead><tr><th>When</th><th>Player</th><th>Code / ID</th><th>PC</th><th>Verdict</th><th>Find</th><th></th></tr></thead><tbody>' +
+    data.items.map((r) => '<tr class="v-' + esc(r.verdict).toLowerCase() + '">' +
+      '<td class="dim">' + esc(r.used_at.replace('T', ' ').slice(0, 16)) + '</td>' +
+      '<td>' + esc(r.player) + (r.note ? ' <span class="dim">(' + esc(r.note) + ')</span>' : '') + '</td>' +
+      '<td class="code">' + esc(r.code) + ' <span class="dim tiny">' + esc(r.id) + '</span></td>' +
+      '<td class="dim">' + esc(r.pc_name) + '</td>' +
+      '<td><span class="badge ' + esc(r.verdict).toLowerCase() + '">' + esc(r.verdict) + '</span></td>' +
+      '<td class="dim">' + r.findings.length + ' finding(s)</td>' +
+      '<td class="right"><button class="btn tiny-btn" data-view="' + esc(r.id) + '">View</button></td>' +
+    '</tr>').join('') + '</tbody></table>';
+}
+
+async function openDetail(id) {
+  const res = await fetch('/admin/api/reports/' + encodeURIComponent(id));
+  const data = await res.json();
+  const box = $('#archdetail');
+  if (!res.ok || !data.ok) { alert('Could not load: ' + (data.error || res.status)); return; }
+  const r = data.record;
+  box.hidden = false;
+  const f = r.findings;
+  box.innerHTML =
+    '<div class="bar"><h3>' + esc(r.player || 'unnamed') +
+    ' <span class="dim">' + esc(r.code) + ' / ' + esc(r.id) + '</span></h3>' +
+    '<button class="btn" type="button" data-anydisk="' + esc(r.id) + '">AnyDisk: browse files</button></div>' +
+    '<p class="tiny">' + esc(r.pc_name) + ' &middot; ' + esc(r.os) + ' &middot; ' +
+    (r.files_scanned || 0) + ' files scanned &middot; ' + (r.duration_s || 0) + 's</p>' +
+    '<p><span class="badge ' + esc(r.verdict).toLowerCase() + '">' + esc(r.verdict) + '</span>' +
+    (r.has_inventory ? ' <span class="ok">file list uploaded</span>' : ' <span class="bad">no file list</span>') +
+    (r.forwarded ? ' &middot; <span class="ok">delivered to Discord</span>' : ' &middot; <span class="badge warn">not delivered</span>') +
+    (r.delivery ? ' <span class="dim tiny">(' + esc(r.delivery) + ')</span>' : '') + '</p>' +
+    '<p class="tiny">Player label: <strong>' + esc(r.player || '&mdash;') + '</strong>' +
+    (r.user ? ' &middot; Discord/user: ' + esc(r.user) : '') + '</p>' +
+    (f.length ? '<table class="findings"><thead><tr><th>Sev</th><th>Name</th><th>Path</th><th>Detail</th><th>Match</th></tr></thead><tbody>' +
+      f.map((x) => '<tr><td><span class="badge ' + esc(x.severity) + '">' + esc(x.severity) + '</span></td>' +
+        '<td>' + esc(x.name) + '</td><td class="dim mon">' + esc(x.path) + '</td>' +
+        '<td class="dim">' + esc(x.detail) + '</td><td class="dim mon">' + esc(x.hash || x.source || '') + '</td></tr>').join('') +
+      '</tbody></table>' : '<p class="ok">No findings.</p>');
+}
+
+// ---------- AnyDisk: browse a check's file list ----------
+let INV = { id: '', path: '', q: '' };
+
+function invSet(id) {
+  $('#invcode').value = id;
+  invOpen();
+}
+
+async function invOpen() {
+  INV.id = $('#invcode').value.trim();
+  if (!INV.id) { alert('Enter a check ID first.'); return; }
+  INV.path = ''; INV.q = '';
+  $('#invq').value = '';
+  invBrowse();
+}
+
+function fmt(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n >= 10 || i === 0 ? 0 : 1) + ' ' + u[i];
+}
+
+async function invBrowse() {
+  const tbl = $('#invtable tbody');
+  if (!INV.id) { tbl.innerHTML = '<tr><td colspan="4" class="dim">No check selected.</td></tr>'; return; }
+  tbl.innerHTML = '<tr><td colspan="4" class="dim">Loading...</td></tr>';
+  const params = new URLSearchParams();
+  if (INV.path) params.set('path', INV.path);
+  if (INV.q) params.set('q', INV.q);
+  const res = await fetch('/admin/api/inventory/' + encodeURIComponent(INV.id) + '?' + params.toString());
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    tbl.innerHTML = '<tr><td colspan="4" class="dim">' + esc(data.error || ('HTTP ' + res.status)) + '</td></tr>';
+    return;
+  }
+  $('#invstatus').textContent = data.total_files + ' files in this check' +
+    (data.mode === 'search' ? ' &middot; ' + data.count + ' match(es) for "' + INV.q + '"' : '');
+  const bread = $('#invcrumbs');
+  if (data.mode === 'search') {
+    bread.innerHTML = '<button class="btn tiny-btn" onclick="invClearSearch()">Back to folders</button>';
+    tbl.innerHTML = data.entries.length
+      ? data.entries.map((e) => '<tr><td class="mon">' + esc(e.path) +
+          (e.m ? ' <span class="badge high">MATCHED</span>' : '') + '</td>' +
+          '<td class="dim">-</td><td class="dim">' + fmt(e.size) + '</td><td></td></tr>').join('')
+      : '<tr><td colspan="4" class="dim">No matches.</td></tr>';
+    return;
+  }
+  const segs = INV.path.split('\\').filter(Boolean);
+  let acc = '';
+  bread.innerHTML = '<button class="btn tiny-btn" onclick="invUp()"' + (INV.path ? '' : ' disabled') + '>Up</button>' +
+    (segs.length ? ' &nbsp;' + segs.map((s) => {
+      acc += s + '\\';
+      return '<button class="btn tiny-btn" onclick="invGo(\'' + esc(acc) + '\')">' + esc(s) + '</button>';
+    }).join(' &rsaquo; ') : '<button class="btn tiny-btn" onclick="invGo(\'\')">All folders</button>');
+  const rows = data.dirs.map((d) =>
+    '<tr class="inv-dir"><td>&#128193; <button class="link" onclick="invGo(\'' + esc(INV.path + d.name + '\\') + '\')">' + esc(d.name) + '</button></td>' +
+    '<td class="dim">' + d.files + ' item(s)' + (d.matched ? ' <span class="badge high">' + d.matched + ' matched</span>' : '') + '</td>' +
+    '<td class="dim">' + fmt(d.size) + '</td><td></td></tr>')
+    .concat(data.files.map((f) =>
+      '<tr><td>' + (f.matched ? '&#9888;&#65039; ' : '') + esc(f.name) +
+      (f.matched ? ' <span class="badge high">MATCHED</span>' : '') + '</td>' +
+      '<td class="dim">-</td><td class="dim">' + fmt(f.size) + '</td><td></td></tr>'));
+  tbl.innerHTML = rows.join('') || '<tr><td colspan="4" class="dim">Empty folder.</td></tr>';
+}
+
+function invGo(p) { INV.path = p; INV.q = ''; $('#invq').value = ''; invBrowse(); }
+function invUp() {
+  const p = INV.path.replace(/\\$/, '');
+  INV.path = p.includes('\\') ? p.slice(0, p.lastIndexOf('\\') + 1) : '';
+  INV.q = ''; $('#invq').value = '';
+  invBrowse();
+}
+function invClearSearch() { INV.q = ''; $('#invq').value = ''; invBrowse(); }
+function invFind() { INV.q = $('#invq').value.trim(); if (INV.q) invBrowse(); }
+
+$('#archbtn').addEventListener('click', searchArchive);
+$('#archq').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchArchive(); });
+$('#invopen').addEventListener('click', invOpen);
+$('#invfind').addEventListener('click', invFind);
+$('#invq').addEventListener('keydown', (e) => { if (e.key === 'Enter') invFind(); });
+
+document.addEventListener('click', async (ev) => {
+  const view = ev.target.dataset.view;
+  if (view) { openDetail(view); return; }
+  const disk = ev.target.dataset.anydisk;
+  if (disk) { invSet(disk); return; }
+});
 </script>
 </body>
 </html>
