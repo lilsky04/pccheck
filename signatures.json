@@ -210,7 +210,9 @@
     "\\txdata\\", "\\server-cache\\", "\\server-resources\\",
     "\\resources\\",
     "\\zxcvbndata\\",
-    "\\utils.py", "\\utils\\"
+    "\\utils.py", "\\utils\\",
+    "\\temp\\opencode\\", "\\documents\\default project\\pccheck\\",
+    "PC_Check_Report_", "pccheck_inv_"
   ],
 
   "_skip_doc": [
