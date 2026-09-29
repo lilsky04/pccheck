@@ -135,6 +135,14 @@
     <table id="invtable"><thead><tr><th>Name</th><th>Items</th><th>Size</th><th></th></tr></thead><tbody></tbody></table>
     <p id="invstatus" class="tiny"></p>
   </section>
+
+  <section class="card">
+    <h2>Cheat-type catalog</h2>
+    <p class="tiny">Every cheat type PC Check looks for (from the signature database), grouped by severity,
+       with how many name/path patterns each one covers. Loaded from
+       <code>/admin/api/catalog</code>.</p>
+    <div id="catbox" class="panel"><p class="dim">Loading...</p></div>
+  </section>
 </main>
 
 <script>
@@ -249,7 +257,7 @@ async function searchArchive() {
       '<td class="code">' + esc(r.code) + ' <span class="dim tiny">' + esc(r.id) + '</span></td>' +
       '<td class="dim">' + esc(r.pc_name) + '</td>' +
       '<td><span class="badge ' + esc(r.verdict).toLowerCase() + '">' + esc(r.verdict) + '</span></td>' +
-      '<td class="dim">' + r.findings.length + ' finding(s)</td>' +
+      '<td class="dim">' + r.findings.length + ' finding(s)' + typesChips(r.types) + '</td>' +
       '<td class="right"><button class="btn tiny-btn" data-view="' + esc(r.id) + '">View</button></td>' +
     '</tr>').join('') + '</tbody></table>';
 }
@@ -274,12 +282,46 @@ async function openDetail(id) {
     (r.delivery ? ' <span class="dim tiny">(' + esc(r.delivery) + ')</span>' : '') + '</p>' +
     '<p class="tiny">Player label: <strong>' + esc(r.player || '&mdash;') + '</strong>' +
     (r.user ? ' &middot; Discord/user: ' + esc(r.user) : '') + '</p>' +
+    (r.types && r.types.length
+      ? '<p>Cheat types: ' + typesChips(r.types) + '</p>' : '') +
     (f.length ? '<table class="findings"><thead><tr><th>Sev</th><th>Name</th><th>Path</th><th>Detail</th><th>Match</th></tr></thead><tbody>' +
       f.map((x) => '<tr><td><span class="badge ' + esc(x.severity) + '">' + esc(x.severity) + '</span></td>' +
         '<td>' + esc(x.name) + '</td><td class="dim mon">' + esc(x.path) + '</td>' +
         '<td class="dim">' + esc(x.detail) + '</td><td class="dim mon">' + esc(x.hash || x.source || '') + '</td></tr>').join('') +
       '</tbody></table>' : '<p class="ok">No findings.</p>');
 }
+
+// Colored chips for the cheat types of a record ("aimbot x2", "no-recoil x1"...).
+function typesChips(types) {
+  if (!types || !types.length) return '';
+  return '<span class="chiprow">' + types.map((t) =>
+    '<span class="chip ' + esc(t.sev) + '" title="' + esc(t.tag) + '">' +
+    esc(t.type) + ' \u00d7' + (t.count || 1) + '</span>'
+  ).join('') + '</span>';
+}
+
+// ---------- Cheat-type catalog ----------
+async function loadCatalog() {
+  const box = $('#catbox');
+  try {
+    const res = await fetch('/admin/api/catalog');
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || res.status);
+    if (!data.items.length) { box.innerHTML = '<p class="dim">Empty catalog.</p>'; return; }
+    box.innerHTML = '<p class="tiny dim">signature DB version ' + esc(data.version) + '</p>' +
+      '<table class="findings"><thead><tr><th>Severity</th><th>Cheat type</th><th>Patterns</th><th>File extensions</th><th>Example patterns</th></tr></thead><tbody>' +
+      data.items.map((t) => '<tr>' +
+        '<td><span class="badge ' + esc(t.sev) + '">' + esc(t.sev) + '</span></td>' +
+        '<td><strong>' + esc(t.type) + '</strong> <span class="dim tiny">(' + esc(t.tag) + ')</span></td>' +
+        '<td class="dim">' + t.patterns.length + '</td>' +
+        '<td class="dim mon">' + esc((t.exts || []).join(', ') || '&mdash;') + '</td>' +
+        '<td class="dim mon tiny">' + esc((t.patterns || []).slice(0, 3).join(', ') || '&mdash;') + '</td>' +
+        '</tr>').join('') + '</tbody></table>';
+  } catch (err) {
+    box.innerHTML = '<p class="bad">Could not load the catalog: ' + esc(err.message) + '</p>';
+  }
+}
+loadCatalog();
 
 // ---------- AnyDisk: browse a check's file list ----------
 let INV = { id: '', path: '', q: '' };
