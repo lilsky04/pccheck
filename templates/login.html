@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Admin - {{ app_name }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="centered">
+<main class="wrap narrow">
+  <section class="card">
+    <h1>Admin login</h1>
+    {% if error %}<div class="warn-box">{{ error }}</div>{% endif %}
+    <form method="post" autocomplete="off">
+      <label>Username
+        <input type="text" name="username" value="admin" required autofocus>
+      </label>
+      <label>Password
+        <input type="password" name="password" required>
+      </label>
+      <button class="btn" type="submit">Log in</button>
+    </form>
+    <p class="tiny">A successful login signs out any other open session.</p>
+  </section>
+</main>
+</body>
+</html>
