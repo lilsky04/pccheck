@@ -17,73 +17,23 @@
     <p class="tiny">
       signatures <strong>{{ sig_version }}</strong> &middot;
       high {{ sig_counts.get('high', 0) }} / medium {{ sig_counts.get('medium', 0) }} / low {{ sig_counts.get('low', 0) }} &middot;
-      links live {{ ttl_minutes }} min &middot;
       webhook {% if webhook_ok %}<span class="ok">configured</span>{% else %}<span class="bad">MISSING</span>{% endif %}
     </p>
-
-    <h2>Create a check link</h2>
-    <form id="create" class="row">
-      <label>Player name / Discord
-        <input id="player" type="text" placeholder="e.g. JohnDoe or 123456789012345678" required>
-      </label>
-      <label>Note <span class="tiny">(for you only)</span>
-        <input id="note" type="text" placeholder="e.g. reported for wallhacks">
-      </label>
-      <label>Expires
-        <select id="ttl">
-          <option value="900">15 minutes</option>
-          <option value="1800" selected>30 minutes</option>
-          <option value="3600">1 hour</option>
-          <option value="7200">2 hours</option>
-        </select>
-      </label>
-      <button class="btn" type="submit">Create link</button>
-    </form>
-
-    <div id="newlink" class="newlink" hidden>
-      <div class="code" id="link_code"></div>
-      <div class="linkrow">
-        <input id="linkurl" type="text" readonly>
-        <button class="btn" type="button" data-copy="linkurl">Copy</button>
-        <a class="btn ghost" id="dl" href="#" download>Download</a>
-      </div>
-      <p class="tiny">Expires at <strong id="expires"></strong>. Send the link to the player.
-         It works once. If they run it, the report lands in your Discord channel.</p>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Open links</h2>
-    <table id="checks">
-      <thead><tr><th>Code</th><th>Player</th><th>Note</th><th>Expires</th><th></th></tr></thead>
-      <tbody>
-      {% for c in checks %}
-        <tr data-code="{{ c.code }}">
-          <td class="code">{{ c.code }}</td>
-          <td>{{ c.player }}</td>
-          <td class="dim">{{ c.note or '' }}</td>
-          <td class="dim" data-expires="{{ c.expires }}"></td>
-          <td class="right">
-            <button class="btn tiny-btn" data-copy-code="{{ c.code }}">Copy link</button>
-            <button class="btn tiny-btn bad-btn" data-revoke="{{ c.code }}">Revoke</button>
-          </td>
-        </tr>
-      {% else %}
-        <tr><td colspan="5" class="dim">No open links. Create one above.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <p class="tiny">
+      Players are identified by the Discord ID they type into the client.
+      There are no one-time codes anymore. Send a player
+      <a href="{{ base }}/go/">this link</a> and they download the client directly.
+    </p>
   </section>
 
   <section class="card">
     <h2>Recent reports</h2>
     <table id="used">
-      <thead><tr><th>Code</th><th>Player</th><th>Verdict</th><th>Find</th><th>When</th><th></th></tr></thead>
+      <thead><tr><th>Discord ID</th><th>Verdict</th><th>Find</th><th>When</th><th></th></tr></thead>
       <tbody>
       {% for r in used %}
-        <tr data-code="{{ r.code }}" class="v-{{ r.verdict|lower }}">
-          <td class="code">{{ r.code }}</td>
-          <td>{{ r.player }}</td>
+        <tr data-id="{{ r.id }}" class="v-{{ r.verdict|lower }}">
+          <td class="code">{{ r.player or '' }}</td>
           <td><span class="badge {{ r.verdict|lower }}">{{ r.verdict }}</span>
               {% if not r.forwarded %}<span class="badge warn">not delivered</span>{% endif %}
           </td>
@@ -97,7 +47,7 @@
           <td class="right"><button class="btn tiny-btn" data-view="{{ r.id }}">View</button></td>
         </tr>
       {% else %}
-        <tr><td colspan="6" class="dim">No reports yet.</td></tr>
+        <tr><td colspan="5" class="dim">No reports yet.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -105,11 +55,11 @@
 
   <section class="card">
     <h2>Player archive</h2>
-    <p class="tiny">Searchable history of every player check (name, code, check ID, PC name or Discord tag).
+    <p class="tiny">Searchable history of every player check (Discord ID, check ID, PC name or Discord tag).
        Results are saved permanently, even after a server restart.</p>
     <div class="controls">
       <label>Search
-        <input id="archq" type="text" placeholder="e.g. JohnDoe, T9YHWP, ab12cd34" style="min-width:320px">
+        <input id="archq" type="text" placeholder="e.g. 123456789012345678 or a check ID" style="min-width:320px">
       </label>
       <button class="btn" type="button" id="archbtn">Search</button>
     </div>
@@ -157,77 +107,14 @@ function copy(text, btn) {
   });
 }
 
-$('#create').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const btn = ev.target.querySelector('button');
-  btn.disabled = true;
-  try {
-    const res = await fetch('/admin/api/checks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        player: $('#player').value,
-        note: $('#note').value,
-        ttl_s: parseInt($('#ttl').value, 10)
-      })
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || res.status);
-    const box = $('#newlink');
-    box.hidden = false;
-    $('#link_code').textContent = data.code;
-    $('#linkurl').value = data.link;
-    $('#dl').href = data.link;
-    $('#expires').textContent = new Date(data.expires_at.replace('+00:00', 'Z')).toLocaleString();
-    const playerName = $('#player').value || 'unlabelled';
-    const noteText = $('#note').value || '';
-    $('#note').value = '';
-    // No page reload here: it would wipe the link that was just created.
-    // Append the new row so the open-links table stays in sync.
-    const tbody = $('#checks tbody');
-    const empty = tbody.querySelector('td[colspan]');
-    if (empty) empty.closest('tr').remove();
-    tbody.insertAdjacentHTML('beforeend',
-      '<tr><td class="code">' + data.code + '</td><td>' + playerName + '</td>' +
-      '<td class="dim">' + noteText + '</td>' +
-      '<td class="dim" data-expires="' +
-      Math.round(Date.now() / 1000 + (data.expires_in_s || 1800)) + '"></td>' +
-      '<td class="right"><button class="btn tiny-btn" data-copy-code="' + data.code +
-      '">Copy link</button><button class="btn tiny-btn bad-btn" data-revoke="' +
-      data.code + '">Revoke</button></td></tr>');
-    tick();
-  } catch (err) {
-    alert('Could not create the link: ' + err.message);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
 document.addEventListener('click', async (ev) => {
-  const copyCode = ev.target.dataset.copyCode;
-  if (copyCode) {
-    copy(location.origin + '/go/' + copyCode, ev.target);
-    return;
-  }
   if (ev.target.dataset.copy) {
     copy($('#' + ev.target.dataset.copy).value, ev.target);
     return;
   }
-  const revoke = ev.target.dataset.revoke;
-  if (revoke) {
-    if (!confirm('Revoke code ' + revoke + '?')) return;
-    await fetch('/admin/api/checks/' + revoke, { method: 'DELETE' });
-    location.reload();
-  }
 });
 
 function tick() {
-  $$('[data-expires]').forEach((td) => {
-    const left = Math.max(0, Math.round(+td.dataset.expires * 1000 - Date.now()) / 1000);
-    const m = Math.floor(left / 60), s = left % 60;
-    td.textContent = left > 0 ? `${m}m ${String(Math.floor(s)).padStart(2, '0')}s left` : 'expired';
-    if (left <= 0) td.parentElement.classList.add('dead');
-  });
   $$('[data-used]').forEach((td) => {
     const d = new Date(+td.dataset.used * 1000);
     const mins = Math.floor((Date.now() - d) / 60000);
@@ -235,7 +122,7 @@ function tick() {
   });
 }
 tick();
-setInterval(tick, 1000);
+setInterval(tick, 60000);
 
 // ---------- Player archive (search + detail) ----------
 function esc(s) {
@@ -250,11 +137,11 @@ async function searchArchive() {
   const box = $('#archres');
   if (!res.ok || !data.ok) { box.innerHTML = '<p class="bad">' + esc(data.error || ('HTTP ' + res.status)) + '</p>'; return; }
   if (!data.items.length) { box.innerHTML = '<p class="dim">Nothing found.</p>'; return; }
-  box.innerHTML = '<table><thead><tr><th>When</th><th>Player</th><th>Code / ID</th><th>PC</th><th>Verdict</th><th>Find</th><th></th></tr></thead><tbody>' +
+  box.innerHTML = '<table><thead><tr><th>When</th><th>Discord ID</th><th>Check ID</th><th>PC</th><th>Verdict</th><th>Find</th><th></th></tr></thead><tbody>' +
     data.items.map((r) => '<tr class="v-' + esc(r.verdict).toLowerCase() + '">' +
       '<td class="dim">' + esc(r.used_at.replace('T', ' ').slice(0, 16)) + '</td>' +
-      '<td>' + esc(r.player) + (r.note ? ' <span class="dim">(' + esc(r.note) + ')</span>' : '') + '</td>' +
-      '<td class="code">' + esc(r.code) + ' <span class="dim tiny">' + esc(r.id) + '</span></td>' +
+      '<td class="code">' + esc(r.player || r.user || '&mdash;') + '</td>' +
+      '<td class="dim tiny">' + esc(r.id) + '</td>' +
       '<td class="dim">' + esc(r.pc_name) + '</td>' +
       '<td><span class="badge ' + esc(r.verdict).toLowerCase() + '">' + esc(r.verdict) + '</span></td>' +
       '<td class="dim">' + r.findings.length + ' finding(s)' + typesChips(r.types) + '</td>' +
@@ -271,8 +158,8 @@ async function openDetail(id) {
   box.hidden = false;
   const f = r.findings;
   box.innerHTML =
-    '<div class="bar"><h3>' + esc(r.player || 'unnamed') +
-    ' <span class="dim">' + esc(r.code) + ' / ' + esc(r.id) + '</span></h3>' +
+    '<div class="bar"><h3>' + esc(r.player || r.user || 'unnamed') +
+    ' <span class="dim">' + esc(r.id) + '</span></h3>' +
     '<button class="btn" type="button" data-anydisk="' + esc(r.id) + '">AnyDisk: browse files</button></div>' +
     '<p class="tiny">' + esc(r.pc_name) + ' &middot; ' + esc(r.os) + ' &middot; ' +
     (r.files_scanned || 0) + ' files scanned &middot; ' + (r.duration_s || 0) + 's</p>' +
@@ -280,8 +167,8 @@ async function openDetail(id) {
     (r.has_inventory ? ' <span class="ok">file list uploaded</span>' : ' <span class="bad">no file list</span>') +
     (r.forwarded ? ' &middot; <span class="ok">delivered to Discord</span>' : ' &middot; <span class="badge warn">not delivered</span>') +
     (r.delivery ? ' <span class="dim tiny">(' + esc(r.delivery) + ')</span>' : '') + '</p>' +
-    '<p class="tiny">Player label: <strong>' + esc(r.player || '&mdash;') + '</strong>' +
-    (r.user ? ' &middot; Discord/user: ' + esc(r.user) : '') + '</p>' +
+    '<p class="tiny">Discord ID: <strong>' + esc(r.player || '&mdash;') + '</strong>' +
+    (r.user ? ' &middot; label: ' + esc(r.user) : '') + '</p>' +
     (r.types && r.types.length
       ? '<p>Cheat types: ' + typesChips(r.types) + '</p>' : '') +
     (f.length ? '<table class="findings"><thead><tr><th>Sev</th><th>Name</th><th>Path</th><th>Detail</th><th>Match</th></tr></thead><tbody>' +
