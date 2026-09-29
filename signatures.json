@@ -1,0 +1,338 @@
+{
+  "version": "2026.09.28-4",
+  "updated_at": "2026-09-28",
+  "client_version_req": "1.0",
+
+  "_doc": [
+    "Edit this file on the Replit server, then just restart the backend.",
+    "The client downloads it from GET /api/signatures at start, so the .exe",
+    "does NOT need rebuilding when you change anything here.",
+    "matching = names/paths are compared with case, spaces, dots, dashes and",
+    "underscores removed, on both sides. So 'N0Recoil', 'no_recoil' and",
+    "'no recoil' are the same word. That also means a name containing a",
+    "keyword matches, e.g. 'my-cheatengine-notes.txt' matches 'cheatengine'.",
+    "severity = high   -> verdict CHEATER",
+    "severity = medium -> verdict SUSPICIOUS (if no high)",
+    "severity = low    -> info only, never changes the verdict",
+    "",
+    "READ THIS BEFORE ADDING A KEYWORD.",
+    "Because matching is substring based, a keyword that also occurs inside an",
+    "ordinary Windows/game word will fire on every clean machine. Measured on a",
+    "stock Windows 11 + FiveM PC, these were all false CHEATER hits and are now",
+    "gone - do not add them back:",
+    "  walls    -> NetFirewallSecurityFilter.cmdletDefinition.cdxml",
+    "  mapper   -> ResourceMapper.dll, reshade-...AdaptiveTonemapper.asm",
+    "  triggers -> msmq-triggers-DL.man, Microsoft-Windows-msmq-triggers-*",
+    "  magnet   -> c_magneticstripereader.inf",
+    "  bypass   -> C:\\Windows\\System32\\oobe\\BypassNRO.cmd",
+    "  rapidfire-> Rapidfire64.dll (Windows Fax), RapidFireServer64.dll",
+    "  ceserver -> HyperV-IntegrationComponents-VirtualDevice-...cat",
+    "  exec     -> anything containing 'execute'",
+    "  phantom  -> Phantom (camera software)",
+    "  profile  -> UserProfileWmiProvider.mof, WLAN_profile_v3.xsd, load_profile,",
+    "              SteamIDProfilePage.res, ProfilerCore64.dll, profile.dat ...",
+    "  trust    -> wintrust.dll, TrustedInstaller.exe, 'Trust Tokens', trusted_vault.pb",
+    "  xinput   -> XInput1_4.dll, xinput1_3.dll, chxinputrouter.dll (every PC)",
+    "  novert   -> icon_button_fullscreen_over.tga",
+    "  powera   -> '08 - PowerAndSleep.lnk'",
+    "  macro    -> ReShade Macros.fxh, helper-functions-and-macros.fxh",
+    "  charles  -> 'Charles' is a first name;  cutter -> video cutters",
+    "  taskmanager -> the Start Menu shortcut, present on every PC",
+    "  sniffer    -> CodeSniffer.php (PHP), any packet sniffer",
+    "  scriptfile -> Edge DevTools ...\\debugger\\images\\scriptfileicon.png",
+    "  adminmenu  -> QBCore/ESX resources ship a resource literally named",
+    "              qb-adminmenu, which also contains noclip.lua",
+    "  ilspy      -> 'ut-ilspy.py' (utils.py)",
+    "  reclass    -> Java/Kotlin B-INF output; whitelisted instead",
+    "",
+    "These are whitelisted rather than removed because a real cheat really can",
+    "live there, and the file is a normal dev/build folder when it does not:",
+    "  \\resources\\, \\txdata\\, \\server-resource-cache\\  FiveM server data",
+    "  \\xampp\\, \\tomcat\\, \\webapps\\                   web dev server",
+    "  \\binf\\                                          Java build output",
+    "  \\utils.py, \\utils\\                              'utils.py' vs 'ilspy'",
+    "  \\reshade-shaders\\, \\citizen\\scripting\\         ReShade / FiveM scripts",
+    "",
+    "Rule of thumb: add the CHEAT name, never the ordinary English word it is a",
+    "substring of. Prefer compounds (rapidfiremacro, wallhack) over bare words",
+    "(walls, mapper). Before you save, run: python client/selftest.py"
+  ],
+
+  "categories": {
+    "high": [
+      { "tag": "fivem-cheat-menu", "kind": "name",
+        "names": ["eulen", "eulencheat", "redengine", "skriptgg", "skript.gg",
+                  "hxsoftware", "lynxmenu", "lynx", "desudo", "dawn", "guh",
+                  "menuhax", "executor", "luaexecutor", "luaproject",
+                  "modmenu", "fivemcheat", "fivemhacks", "kidd", "underware",
+                  "neverlose", "neverlosecheat", "gta5cheat", "gta5hacks",
+                  "hammafia", "hamma", "nezha", "brutan", "arpon", "skidmenu",
+                  "cranic", "chronix", "subliminal", "dusk", "nyx", "mahox",
+                  "opium", "semirage", "hodaka", "kore", "serp"] },
+
+      { "tag": "aimbot", "kind": "name",
+        "names": ["aimbot", "aimassist", "aimassistnt", "aimassistpro", "autoaim",
+                  "aimkeys", "aimlod", "aiming", "fivemaim", "silentaim",
+                  "silentaimshootatwall", "magnetaim", "bighead", "noconsole"] },
+
+      { "tag": "triggerbot", "kind": "name",
+        "names": ["triggerbot", "triggerbotaotar", "triggerninja",
+                  "mintrigger", "easytrigger", "qbtrigger", "triggerscript"] },
+
+      { "tag": "recoil-hack", "kind": "name",
+        "names": ["norecoil", "no_recoil", "magicbullet", "magicbullets",
+                  "wallhack", "wallcheat",
+                  "bhop", "bunnyhop", "norecoilhack", "recoilhack", "spreadhack",
+                  "nospread", "noshootingrecoil", "bulletspread", "rapidfirehack",
+                  "rapidfiremacro", "rapidfirescript", "rapidfireweapon",
+                  "timewarp", "fastfarm", "xpsystem",
+                  "freemoney", "teleportgun", "teleportveh", "noclip", "noclipper",
+                  "givespeed", "givetool", "adminweapon",
+                  "superadmin", "playerreportbypass", "taserpistol",
+                  "dimensionchange", "brightnessfix", "wepdropupgrade"] },
+
+      { "tag": "injector", "kind": "name",
+        "names": ["extremeinjector", "extremeinjectoranore", "xenos", "xenosinjector",
+                  "kdmapper", "manualmapper", "processhollow", "spoofer",
+                  "hwidspoofer", "hwidspooferpatches", "guidspoofer", "volumeid",
+                  "dmapper", "injector", "spooferbypasser",
+                  "ezinjected", "winetricks", "syscall", "hyperion",
+                  "kdmapper64", "driverloader", "kernelmapper", "remapdll"] },
+
+      { "tag": "cheatengine", "kind": "name",
+        "names": ["cheatengine", "cheatengine7", "cheatengine7.5",
+                  "memtweak", "memhacker", "memoryeditor",
+                  "memprofiler", "hackingtool", "dnhacks", "dnhack", "dnedit"] },
+
+      { "tag": "credential-theft", "kind": "name",
+        "names": ["web3walletstealer", "walletstealer", "stealer", "redline",
+                  "raccoon", "vidar", "mars", "arkei", "raccoonstealer",
+                  "cookiegrabber", "passwordgrabber", "browserstealer",
+                  "discordtoken", "tokenguard", "evadev", "ps4logindumper",
+                  "discordnuker", "crimson", "keylog", "keylogger",
+                  "bitcoinstealer", "metamaskstealer", "coinstealer"] }
+    ],
+
+    "medium": [
+      { "tag": "recoil-control", "kind": "name",
+        "names": ["antirecoil", "recoilscript", "recoilcontrol",
+                  "recoilmacro", "recoilreset", "recoil", "recoilcfg",
+                  "spreadcontrol"] },
+
+      { "tag": "autohotkey", "kind": "name",
+        "names": ["autohotkey", "ahk", "autohotkey2", "autohotkeyv2",
+                  "ahkmacro", "ahkexecutor", "ahkcheat"] },
+
+      { "tag": "mouse-macro", "kind": "name",
+        "names": ["xmousemacro", "xmousebuttoncontrol", "xmbc", "stechmousemacro",
+                  "tmac", "t-macro", "tmacro", "seriousmouse", "mousemacro",
+                  "mouse_macro", "macrotool", "bestmousemacro", "aimmouse",
+                  "botmouse", "mousekey", "advancedmousemacro", "mousemate",
+                  "clavier", "logioptions", "logitechoptions", "x-mouse-button-control"] },
+
+      { "tag": "macro-config", "kind": "name",
+        "names": ["macrogame", "macrolua", "luamacro",
+                  "gammakeys", "onboardmemories", "mousemacros",
+                  "mousedefaults", "devicemacros",
+                  "gkeysmacro", "m2macro", "m1macro", "macroprofile",
+                  "mouseprofile", "keyprofile", "deviceprofile", "macrokeys",
+                  "macrosbutton", "fnmacro", "autoclicker", "autoclick"] },
+
+      { "tag": "macro-config", "kind": "path",
+        "paths": [
+          "lghub/macros", "lghub/g-keys-macros", "lghub/lua",
+          "lghub/software/lua", "logitech/lghub", "logitech gaming software",
+          "logitech/options", "logitech/g hub",
+          "razer/synapse", "razer/synapse3", "razer/synapse4", "razer/lua",
+          "razer/chroma", "bloody/ble", "bloody/aiming", "bloody/auto",
+          "bloody/software", "bloody/m3", "bloody/m5", "bloody/m100",
+          "bloody/bloodycontrol", "bloody/lua",
+          "corsair/icue", "corsair/luaruntime", "corsair/icue/lua",
+          "steelseries/engine", "steelseries/gg", "steelseries/macros",
+          "steelseries/prime",
+          "zowie/roccat", "roccat", "zowie",
+          "paddle", "redragon", "gxtdesk", "sonicpad",
+          "sonicmouse", "deviatap", "espgaming", "gamingmouse",
+          "bloody/macro", "bloody/profile", "razer/synapse/macro",
+          "razer/synapse3/macro", "corsair/icue/macro"
+        ] },
+
+      { "tag": "macro-config", "kind": "ext",
+        "exts": ["ahk", "ahkl", "ah2"] },
+
+      { "tag": "macro-config", "kind": "device",
+        "names": ["cronus", "cronuszen", "cronuszenzero", "titantwo", "titan2",
+                  "reasnow", "hzbox", "casiozoom",
+                  "gamingmouse", "deluxecolorkeyboard", "kalange", "kmbox",
+                  "usbspoofer", "hidbox", "facedez", "seriatomouse",
+                  "reapse", "kmboxtitan", "zetools", "makaimacro", "ipadmacro",
+                  "ximapex", "ximapexmini", "deviceapex", "xhdbox"] }
+    ],
+
+    "low": [
+      { "tag": "process-inspector", "kind": "name",
+        "names": ["processhacker", "processhacker3", "systeminformer",
+                  "systeminformer64", "phsysteminformer",
+                  "wireshark", "fiddler", "regshot", "autoruns", "pestudio",
+                  "universaltoolbox", "propertyinspector"] },
+      { "tag": "debugger", "kind": "name",
+        "names": ["x64dbg", "x32dbg", "ollydbg", "windbg", "immunitydebugger",
+                  "dnspy", "dnspyex", "ilspy", "de4dot", "dnspy-x86",
+                  "reclass", "reclassdotnet", "ghidra", "ida", "idaq",
+                  "idaq64", "idapro", "detectit", "pdbrain", "softsde",
+                  "vsdbg", "softice", "binaryninja", "ghidra_bridge",
+                  "dotpeek", "fiddlerclassic", "httpdebugger", "charlesproxy",
+                  "burpsuite", "wiresharkx"] }
+    ]
+  },
+
+  "hash_blacklist": [
+    "_add_sha256_here_any_match_is_high"
+  ],
+
+  "whitelist": [
+    "__pycache__", "site-packages", "python3", "node_modules", "vscode",
+    "package.json", "package-lock.json", "yarn.lock", "\\.git\\", "\\.git/",
+    "\\.vscode\\", "\\.idea\\", "\\obj\\", "\\bin\\debug\\", "\\assets\\",
+    "unins000", "uninstall", "setup.cfg", "readme", "\\steam\\steamapps\\common\\",
+    "\\steamapps\\workshop\\", "\\wine", "\\drivers\\", "\\language",
+    "languagepack", "\\fonts\\", "\\ime\\", "\\thai", "\\luafiles",
+    "\\sunloginclient\\", "\\toDesk\\", "\\rustdesk\\", "\\anydesk\\",
+    "\\powertoys\\", "\\sharex\\", "\\lightshot\\", "\\snipaste\\",
+    "\\macro_pack", "uninstall.exe", "\\cinema\\", "\\policies\\",
+    "\\netscaler\\", "\\mcafee\\", "\\symantec\\", "\\kaspersky\\",
+    "\\avast\\", "\\avg\\", "\\bitdefender\\", "\\malwarebytes\\",
+    "\\fivem\\citizenfx\\", "\\rocitizen\\", "\\steamapps\\common\\fivem",
+    "\\palworld\\", "\\garrysmod\\", "\\dayz\\", "\\rust\\", "\\scum\\",
+    "\\fortnite\\", "\\pubg\\", "\\valorant\\", "\\apex\\",
+    "\\reshade-shaders\\", "\\citizen\\scripting\\", "\\server-resource-cache\\",
+    "\\xampp\\", "\\tomcat\\", "\\webapps\\", "\\binf\\",
+    "\\txdata\\", "\\server-cache\\", "\\server-resources\\",
+    "\\resources\\",
+    "\\zxcvbndata\\",
+    "\\utils.py", "\\utils\\"
+  ],
+
+  "_skip_doc": [
+    "Pruned during the walk, never listed. Do NOT add $Recycle.Bin, Temp or",
+    "Downloads here: those are scanned on purpose. Add a folder when it causes",
+    "a false positive, never to speed things up unless it holds no cheat files."
+  ],
+  "skip_dirs": [
+    "\\windows\\winsxs\\", "\\windows\\assembly\\", "\\windows\\servicing\\",
+    "\\windows\\syswow64\\", "\\windows\\system32\\driverstore\\",
+    "\\windows\\microsoft.net\\", "\\windows\\debug\\", "\\windows\\defender\\",
+    "\\system volume information\\",
+    "\\programdata\\package cache\\",
+    "\\appdata\\local\\packages\\",
+    "\\appdata\\local\\microsoft\\windowsapps\\",
+    "\\appdata\\local\\google\\chrome\\user data\\",
+    "\\appdata\\local\\microsoft\\edge\\user data\\",
+    "\\appdata\\local\\bravesoftware\\",
+    "\\appdata\\roaming\\mozilla\\",
+    "\\appdata\\roaming\\microsoft\\windows\\",
+    "\\node_modules\\", "\\.git\\", "\\.svn\\",
+    "\\intel\\", "\\nvidia\\", "\\amdcache\\", "\\amd\\", "\\.wine\\", "\\browsers\\"
+  ],
+
+  "priority_dirs": [
+    "\\downloads\\", "\\desktop\\", "\\documents\\", "\\videos\\", "\\temp\\",
+    "\\$recycle.bin\\", "\\crashdumps\\"
+  ],
+
+  "fivem_roots": [
+    "%LOCALAPPDATA%\\FiveM\\FiveM.app",
+    "%APPDATA%\\CitizenFX",
+    "%LOCALAPPDATA%\\Rockstar Games\\FiveM",
+    "%APPDATA%\\FiveM",
+    "%LOCALAPPDATA%\\FiveM"
+  ],
+
+  "fivem_allowed_dll": [
+    "citizenfx", "citizenfx.exe", "fxserver", "onetrace", "citizenfx_internals",
+    "cef", "discordbrowser", "discord", "v8", "v8contextsnapshot",
+    "webview2", "playwright", "electron", "easyanticheat", "battleye",
+    "d3dcompiler", "d3d11", "dxgi", "opengl32", "vulkan", "nvapi",
+    "gameoverlayrenderer", "easyhook", "version.dll", "winhttp.dll",
+    "crypt32.dll", "dinput8.dll", "xinput1_3.dll", "dbghelp.dll",
+    "msvcp140", "vcruntime140", "ucrtbase", "api-ms-win", "netapi32",
+    "winmm.dll", "imm32.dll", "dwmapi.dll", "shcore.dll", "propsys",
+    "usermodel.dll", "wtsapi32", "dbgcore.dll", "gdi32.dll", "user32.dll",
+    "kernel32.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll", "shell32.dll",
+    "comctl32.dll", "comdlg32.dll", "advapi32.dll", "secur32.dll", "winsta.dll",
+    "psapi.dll", "dbghelp", "ue4prereq", "easyprereq", "crashreportclient",
+    "riva", "rtss", "gameoverlay", "discord_game_overlay", "overlay",
+    "citizenfx_cef", "citizenfx_ui", "openal", "physx", "steam_api",
+    "steam.dll", "steam_api64", "ssm", "ssm.exe", "nvspcap", "joybus",
+    "wmaus", "msvfw", "avicap", "mfplat", "mf", "mfreadwrite", "dcomp",
+    "dxgi_debug", "d3d9", "dwrite", "opengl", "glfw", "gl", "vulkan-1",
+    "mini765", "mini760", "rda", "rdp", "credprov", "rtsshooks", "d3dcompiler_47",
+    "mscorlib", "system", "microsoft.csharp", "msgpack", "clr2",
+    "mono.posix", "monocsharp", "api-ms-win-core", "profiler", "clrjit"
+  ],
+
+  "_log_doc": [
+    "Greps the last 5 CitizenFX logs. Kept deliberately narrow.",
+    "'require', 'load(', 'menu', 'esp', 'crash', 'kick' and 'executing' all",
+    "occur in normal log output on a healthy install.",
+    "'cheat' had to go too: every FiveM client logs",
+    "  rage::gameskeleton::runinitfunctions: invoking ccheat init_core",
+    "at startup, so keeping it flagged a clean install as CHEATER. The",
+    "individual cheat names (eulen, executor, norecoil, ...) and the WinAPI",
+    "indicators (loadlibrary, writeprocessmemory, ...) still catch a real menu."
+  ],
+  "log_scan_words": [
+    "loaded script", "startedscript", "loaded module", "dll injected",
+    "loadlibrary", "virtualalloc", "writeprocessmemory", "createremotethread",
+    "setwindowshook", "openprocess", "lua_load", "assert(load", "dofile(",
+    "eulen", "executor", "aimbot",
+    "norecoil", "silentaim", "magicbullet", "wallhack", "triggerbot",
+    "hwid", "spoofer", "injector", "aceclient.dll", "easyanticheat",
+    "battleye", "tamper"
+  ],
+
+  "_content_doc": [
+    "Keywords looked for INSIDE files, not just in names. A cheat script is",
+    "often named innocuously ('client.lua', 'weapon.cfg'), so the name sweep",
+    "alone misses it. These rules open small files and search their bytes:",
+    "  'norecoil', 'no_recoil', 'no-recoil' and 'No Recoil' are the SAME word",
+    "  (any amount of space/._- between the parts is tolerated).",
+    "",
+    "Severity is earned by the word itself:",
+    "  high   -> grew the verdict to CHEATER (aimbot, norecoil, wallhack, ...)",
+    "  medium -> SUSPICIOUS (autoclicker, bunnyhop, antirecoil, ...)",
+    "  low    -> info only, never changes the verdict (recoil, macro, ...).",
+    "",
+    "exts limits which file types a rule is scanned in: '*' means every small",
+    "file including .dll/.exe; otherwise only the listed extensions. Bare",
+    "English words (recoil, macro) are restricted to script/config files so",
+    "a game's own settings or a Help folder note can not push a clean PC to",
+    "SUSPICIOUS. Scan cost is bounded: text files up to 512 KB, binaries up",
+    "to 1 MB. Only the matched keyword is reported - never the file contents."
+  ],
+  "content_rules": [
+    {
+      "severity": "high",
+      "words": [
+        "norecoil", "no_recoil", "no-recoil", "norecoilhack", "recoilhack",
+        "recoilmacro", "recoilscript", "aimbot", "silentaim",
+        "silentaimshootatwall", "magicbullet", "triggerbot", "triggerbotscript",
+        "wallhack", "nospread", "noshootingrecoil", "luaexecutor",
+        "extremeinjector", "xenosinjector", "kdmapper", "hwidspoofer",
+        "manualmapper", "cheatengine"
+      ]
+    },
+    {
+      "severity": "medium",
+      "words": ["antirecoil", "anti_recoil", "recoilcontrol", "spreadcontrol",
+                "autoclicker", "auto_click", "auto_clicker", "bunnyhop",
+                "bunny_hop"],
+      "exts": ["lua", "ahk", "ah2", "ahkl", "cfg", "ini", "txt", "ps1"]
+    },
+    {
+      "severity": "low",
+      "words": ["recoil", "macro", "aimassist"],
+      "exts": ["lua", "ahk", "ah2", "ahkl", "cfg", "ini", "txt", "ps1"]
+    }
+  ]
+}
