@@ -43,7 +43,6 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Deque, Dict, Optional, Tuple
 
-import requests
 from flask import (
     Flask,
     Response,
