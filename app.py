@@ -10,17 +10,14 @@ Security model
    (ADMIN_PASSWORD from Replit Secrets). Admin HTML/JSON is served only to
    authenticated sessions.
 3. The .exe never authenticates. It only knows SERVER_URL, which it needs
-   to reach /report. The server derives the "player" identity from the
-   one-time code that was baked into the link, not from anything the client
-   can freely choose.
-4. Codes are single use, bound to one check id, and expire (CHECK_TTL_SECONDS,
-   default 1800s = 30 min).
-5. /report is idempotent per code: the first accepted result is stored, and
-   any replay of the same code is rejected and never re-forwarded to Discord.
+   to reach /report. The player is identified by the Discord ID they type
+   into the client - that ID is treated as the claimed identity of the run.
+4. Every accepted /report creates its own check id server-side. Reports are
+   never replayable or editable once stored.
 
 Anti-automation
 ---------------
-- A per-IP sliding-window limiter for /api/checks (issue) and /report.
+- A per-IP sliding-window limiter for /report and the file-list upload.
 - A global limiter for the login endpoint.
 - One session is actively revoked on each successful admin login.
 """
@@ -67,7 +64,6 @@ HERE = Path(__file__).resolve().parent
 SIGNATURES_PATH = HERE / "signatures.json"
 
 MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # reports stay small; the file list upload needs room
-CHECK_TTL_SECONDS = int(os.environ.get("CHECK_TTL_SECONDS", "1800"))
 SIGNATURE_TTL_SECONDS = int(os.environ.get("SIGNATURE_TTL_SECONDS", "300"))
 COOKIE_NAME = "pccheck_admin"
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") not in ("0", "false", "False")
@@ -98,16 +94,13 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 log = logging.getLogger("pccheck")
 log.setLevel(logging.INFO)
 
-# In-memory state. Replit persists, so add a ReplDB KV store later if you need
-# codes to survive restarts.
+# In-memory state. Keyed by check id (one per accepted /report).
 LOCK = threading.RLock()
-CODES: Dict[str, Dict[str, Any]] = {}
-CODES_TTL: Deque[Tuple[float, str]] = deque()
 SESSIONS: Dict[str, Dict[str, Any]] = {}
 SESSIONS_TTL: Deque[Tuple[float, str]] = deque()
 REVOKED_SESSIONS: Dict[str, float] = {}
 REVOKED_TTL: Deque[Tuple[float, str]] = deque()
-USED_CODES: Dict[str, Dict[str, Any]] = {}
+REPORTS: Dict[str, Dict[str, Any]] = {}
 RATE: Dict[Tuple[str, str], Deque[float]] = {}
 SIG_CACHE: Dict[str, Any] = {"data": None, "expires": 0.0}
 GH: Optional[Dict[str, str]] = None
@@ -184,9 +177,9 @@ def _load_persisted_reports() -> None:
                 rec = json.loads(line)
             except Exception:
                 continue
-            if not isinstance(rec, dict) or not rec.get("code"):
+            if not isinstance(rec, dict) or not rec.get("id"):
                 continue
-            USED_CODES[(rec["code"] or "").upper()] = rec
+            REPORTS[(rec["id"] or "").strip()] = rec
     except Exception:
         log.exception("failed to load reports archive")
 
@@ -351,11 +344,6 @@ def rate_limit(bucket: str, limit: int, window: float) -> None:
 
 def json_error(message: str, status: int = 400):
     return jsonify({"ok": False, "error": message}), status
-
-
-def new_code() -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no I/O/0/1
-    return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
 def load_signatures() -> Dict[str, Any]:
@@ -616,10 +604,10 @@ def build_discord_message(check: Dict[str, Any], report: Dict[str, Any], verdict
     med = [f for f in findings if f["severity"] == "medium"]
     low = [f for f in findings if f["severity"] == "low"]
 
-    # The report carries whatever the player typed, but the admin's own label
-    # (the "player" name given when the code was created) is the reliable ID,
-    # so it is the fallback when the player left the box empty.
-    player_bits = [b for b in (report.get("discord_tag"), report.get("discord_id"),
+    # The report carries whatever the player typed, and player is the Discord
+    # ID they claimed - that is the identity of the run.
+    player_bits = [b for b in (report.get("discord_id"),
+                               report.get("discord_tag"),
                                report.get("user"), report.get("server_label"),
                                check.get("player")) if b]
     player = ", ".join(player_bits) if player_bits else "unknown"
@@ -674,7 +662,7 @@ def build_discord_message(check: Dict[str, Any], report: Dict[str, Any], verdict
             {"name": "PC", "value": clip(pc, 100), "inline": True},
             {"name": "Scan duration", "value": f"{report.get('duration_s', 0)}s", "inline": True},
             {"name": "Scan finished", "value": finished, "inline": True},
-            {"name": "Code / check ID", "value": f"{check['code']} \u00b7 {check['id']}", "inline": False},
+            {"name": "Code / check ID", "value": f"{check.get('code') or 'discord'} \u00b7 {check['id']}", "inline": False},
             {"name": "OS", "value": clip(report.get("os"), 250), "inline": False},
             {"name": "Coverage", "value": coverage, "inline": False},
             {"name": "Cheat types", "value": types_summary, "inline": False},
@@ -686,7 +674,7 @@ def build_discord_message(check: Dict[str, Any], report: Dict[str, Any], verdict
              "inline": False},
             {"name": "Scan notes", "value": f"errors: {err_line}"[:1000], "inline": False},
         ],
-        "footer": {"text": f"code {check['code']} \u00b7 check {check['id']}"},
+        "footer": {"text": f"check {check['id']}"},
     }]
     return {"username": f"{APP_NAME} Report", "embeds": embeds}
 
@@ -705,7 +693,7 @@ def github_summary(check: Dict[str, Any], report: Dict[str, Any], verdict: str) 
         f"{' (<@' + report['discord_id'] + '>)' if report.get('discord_id', '').isdigit() else ''}",
         f"- PC: `{report.get('pc_name')}`",
         f"- OS: {report.get('os')}",
-        f"- Code: `{check['code']}` (check `{check['id']}`)",
+        f"- Check: `{check['id']}`",
         f"- Duration: {report.get('duration_s')}s \u00b7 finished: {report.get('finished')}",
         f"- Findings: {counts}",
         "",
@@ -844,19 +832,16 @@ def admin_logout():
 @admin_required
 def admin_home():
     with LOCK:
-        prune(CODES_TTL, CODES)
         prune(SESSIONS_TTL, SESSIONS)
-        pending = [dict(c) for c in CODES.values()]
-    pending.sort(key=lambda c: c["created_at"], reverse=True)
+        recent = [dict(r) for r in sorted(REPORTS.values(),
+                                          key=lambda c: c.get("used_at", 0), reverse=True)[:40]]
     data = load_signatures()
     return render_template(
         "admin.html",
         app_name=APP_NAME,
-        checks=pending,
-        used=sorted(USED_CODES.values(), key=lambda c: c["used_at"], reverse=True)[:40],
+        used=recent,
         sig_version=data.get("version", "?"),
         sig_counts={k: len(v) for k, v in (data.get("categories") or {}).items()},
-        ttl_minutes=max(1, CHECK_TTL_SECONDS // 60),
         webhook_ok=bool(DISCORD_WEBHOOK_URL),
         base=base_url(),
     )
@@ -866,81 +851,24 @@ def admin_home():
 # Admin API
 # --------------------------------------------------------------------------
 
-@app.route("/admin/api/checks", methods=["POST"])
-@admin_required
-def admin_create_check():
-    rate_limit("issue", 30, 600)
-    data = request.get_json(silent=True) or {}
-    player = clean_str(data.get("player"), 80) or "unlabelled"
-    note = clean_str(data.get("note"), 300)
-    ttl = int(data.get("ttl_s") or CHECK_TTL_SECONDS)
-    ttl = max(300, min(ttl, 24 * 3600))
-
-    with LOCK:
-        prune(CODES_TTL, CODES)
-        while True:
-            code = new_code()
-            if code not in CODES and code not in USED_CODES:
-                break
-        check = {
-            "id": uuid.uuid4().hex[:8],
-            "code": code,
-            "player": player,
-            "note": note,
-            "created_at": now(),
-            "expires": now() + ttl,
-            "used": False,
-        }
-        CODES[code] = check
-        CODES_TTL.append((check["expires"], code))
-        if len(CODES_TTL) > 2000:
-            prune(CODES_TTL, CODES)
-
-    link = f"{base_url()}/go/{code}"
-    log.info("check %s created for %s by admin from %s", check["id"], player, client_ip())
-    return jsonify({"ok": True, "code": code, "id": check["id"], "link": link,
-                    "expires_at": iso(check["expires"]),
-                    "expires_in_s": int(check["expires"] - now())})
-
-
-@app.route("/admin/api/checks/<code>", methods=["DELETE"])
-@admin_required
-def admin_revoke_check(code: str):
-    with LOCK:
-        removed = CODES.pop((code or "").upper(), None)
-    if not removed:
-        return json_error("not_found", 404)
-    return jsonify({"ok": True})
-
-
-@app.route("/admin/api/summary/<code>", methods=["GET"])
-@admin_required
-def admin_summary(code: str):
-    with LOCK:
-        used = USED_CODES.get((code or "").upper())
-    if not used:
-        return json_error("not_found", 404)
-    return jsonify(used)
-
-
 @app.route("/admin/api/reports", methods=["GET"])
 @admin_required
 def admin_reports():
-    """Search the persistent player archive by player name, code, check ID,
-    PC name or Discord tag. The archive survives restarts."""
+    """Search the persistent player archive by Discord ID, check ID, PC name
+    or the label the player typed. The archive survives restarts."""
     q = clean_str(request.args.get("q"), 80).strip().lower()
     limit = max(1, min(int(request.args.get("limit", 50) or 50), 300))
     with LOCK:
-        recs = sorted(USED_CODES.values(),
+        recs = sorted(REPORTS.values(),
                       key=lambda r: r.get("used_at", 0), reverse=True)
     items = []
     for r in recs:
         if q:
             hay = " ".join(str(r.get(k, "")) for k in
-                           ("player", "id", "code", "verdict", "admin_note"))
+                           ("player", "id", "verdict", "admin_note", "code"))
             rpt = r.get("report") or {}
             hay += " " + " ".join(str(rpt.get(k, "")) for k in
-                                  ("pc_name", "discord_tag", "user", "server_label"))
+                                  ("pc_name", "discord_tag", "discord_id", "user", "server_label"))
             if q not in hay.lower():
                 continue
         items.append(_report_summary(r))
@@ -953,8 +881,7 @@ def admin_reports():
 @admin_required
 def admin_report_detail(check_id: str):
     with LOCK:
-        rec = next((r for r in USED_CODES.values()
-                    if r.get("id") == (check_id or "").strip()), None)
+        rec = REPORTS.get((check_id or "").strip())
     if rec is None:
         return json_error("not_found", 404)
     return jsonify({"ok": True, "record": _report_summary(rec)})
@@ -1022,14 +949,13 @@ def admin_catalog():
 # Public API
 # --------------------------------------------------------------------------
 
-@app.route("/go/<code>")
-def go(code: str):
-    with LOCK:
-        prune(CODES_TTL, CODES)
-        exists = (code or "").upper() in CODES
-    if not exists:
-        abort(404)
-    return render_template("go.html", code=code.upper(), base=base_url(), app_name=APP_NAME)
+@app.route("/go/")
+@app.route("/go")
+def go():
+    """The public "run a check" page. There are no one-time codes anymore:
+    a player just downloads the client and types their Discord ID when the
+    client asks."""
+    return render_template("go.html", base=base_url(), app_name=APP_NAME)
 
 
 @app.route("/download")
@@ -1051,7 +977,7 @@ def health():
         "sig_version": load_signatures().get("version", "?"),
         "webhook_configured": bool(DISCORD_WEBHOOK_URL),
         "admin_password_set": bool(ADMIN_PASSWORD or ADMIN_PASSWORD_HASH),
-        "checks_active": len(CODES),
+        "reports_stored": len(REPORTS),
     })
 
 
@@ -1085,31 +1011,23 @@ def report():
     data = request.get_json(silent=True)
     if data is None:
         return json_error("invalid_json", 400)
-    code = clean_str(data.get("code"), 16).upper()
-    if not code:
-        return json_error("missing_code", 400)
+
+    # The player is identified by the Discord ID they typed into the client.
+    # It is their claimed identity, never verified, exactly like a username.
+    discord_id = clean_str(data.get("discord_id"), 40)
+    if not discord_id:
+        return json_error("missing_discord_id", 400)
 
     with LOCK:
-        prune(CODES_TTL, CODES)
         prune(SESSIONS_TTL, SESSIONS)
-        check = CODES.get(code)
-        if check is None:
-            if code in USED_CODES:
-                return json_error("code_already_used", 409)
-            return json_error("invalid_or_expired_code", 403)
-        # Burn the code immediately: one report per code, no retries, no
-        # duplicate Discord messages.
-        CODES.pop(code, None)
-        check["used"] = True
-        check["used_at"] = now()
+        check_id = uuid.uuid4().hex[:8]
+        while check_id in REPORTS:
+            check_id = uuid.uuid4().hex[:8]
+        check = {"id": check_id, "player": discord_id, "used_at": now()}
 
     report_obj, err = validate_payload(data)
     if err:
-        with LOCK:
-            check["used"] = False
-            CODES[code] = check
-            CODES_TTL.append((check["expires"], code))
-        log.warning("report for %s rejected: %s", code, err)
+        log.warning("report rejected for %s: %s", discord_id, err)
         return json_error(err, 400)
 
     # Server-side re-classification. The server always has the final word and
@@ -1134,12 +1052,9 @@ def report():
     forwarded, note = forward_to_discord(check, report_obj, verdict)
 
     record = {
-        "code": code,
-        "id": check["id"],
-        "player": check["player"],
-        "admin_note": check.get("note", ""),
-        "created_at": check["created_at"],
-        "expires": check["expires"],
+        "id": check_id,
+        "player": discord_id,
+        "admin_note": "",
         "used_at": check["used_at"],
         "report": report_obj,
         "verdict": verdict,
@@ -1154,22 +1069,22 @@ def report():
         "inv_bytes": 0,
     }
     with LOCK:
-        USED_CODES[code] = record
+        REPORTS[check_id] = record
         _append_report(record)
-        if len(USED_CODES) > 2000:
-            for k in list(USED_CODES.keys())[:-2000]:
-                USED_CODES.pop(k, None)
+        if len(REPORTS) > 2000:
+            for k in list(REPORTS.keys())[:-2000]:
+                REPORTS.pop(k, None)
 
-    log.info("report %s code=%s verdict=%s findings=%d forwarded=%s (%s) in %.2fs",
-             check["id"], code, verdict, len(report_obj["findings"]), forwarded, note,
+    log.info("report %s discord_id=%.30s verdict=%s findings=%d forwarded=%s (%s) in %.2fs",
+             check_id, discord_id, verdict, len(report_obj["findings"]), forwarded, note,
              now() - started)
 
     # A 200 tells the client its result reached the server. It is not a lie:
     # the report is persisted even if the webhook is misconfigured, and the
     # admin page shows the forwarding status. `check` + `inv_token` let the
     # client upload its file list afterwards.
-    return jsonify({"ok": True, "verdict": verdict, "code": code,
-                    "check": check["id"], "inv_token": record["inv_token"]})
+    return jsonify({"ok": True, "verdict": verdict, "discord_id": discord_id,
+                    "check": check_id, "inv_token": record["inv_token"]})
 
 
 @app.route("/api/inventory", methods=["POST"])
@@ -1191,8 +1106,7 @@ def api_inventory():
     if not (check_id and token and isinstance(payload, str) and payload):
         return json_error("missing_fields", 400)
     with LOCK:
-        rec = next((r for r in USED_CODES.values()
-                    if r.get("id") == check_id), None)
+        rec = REPORTS.get(check_id)
         if rec is None:
             return json_error("unknown_check", 404)
         if rec.get("inv_token") != token:
@@ -1237,9 +1151,6 @@ def too_many(_):
 def not_found(e):
     if request.path.startswith("/api/") or request.path == "/report":
         return json_error("not_found", 404)
-    if request.path.startswith("/go/"):
-        return render_template("go.html", code=None, base=base_url(),
-                               app_name=APP_NAME), 404
     return render_template("error.html", code=404, app_name=APP_NAME,
                            message="That page does not exist."), 404
 
