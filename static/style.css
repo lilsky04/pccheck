@@ -85,6 +85,16 @@ input, select {
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .row { display: grid; grid-template-columns: 1fr 1fr 160px auto; gap: 12px; align-items: end; }
 @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
+/* Flexible control rows (player archive, AnyDisk) */
+.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 8px 0; }
+.controls label { min-width: 200px; flex: 0 1 auto; }
+.panel { margin-top: 10px; }
+.detail { background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.crumbs { min-height: 26px; margin: 6px 0; }
+.mon { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; word-break: break-all; }
+.link { background: none; border: none; color: #79a8ff; cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.inv-dir .link { font-weight: 600; }
+.findings td { font-size: 13px; }
 
 .code {
   font-family: Consolas, "Cascadia Mono", monospace;
