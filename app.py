@@ -27,6 +27,8 @@ Anti-automation
 
 from __future__ import annotations
 
+import base64
+import gzip
 import hmac
 import json
 import logging
@@ -64,7 +66,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 HERE = Path(__file__).resolve().parent
 SIGNATURES_PATH = HERE / "signatures.json"
 
-MAX_CONTENT_LENGTH = 2 * 1024 * 1024  # 2 MB is plenty for a findings report
+MAX_CONTENT_LENGTH = 5 * 1024 * 1024  # reports stay small; the file list upload needs room
 CHECK_TTL_SECONDS = int(os.environ.get("CHECK_TTL_SECONDS", "1800"))
 SIGNATURE_TTL_SECONDS = int(os.environ.get("SIGNATURE_TTL_SECONDS", "300"))
 COOKIE_NAME = "pccheck_admin"
@@ -110,6 +112,13 @@ RATE: Dict[Tuple[str, str], Deque[float]] = {}
 SIG_CACHE: Dict[str, Any] = {"data": None, "expires": 0.0}
 GH: Optional[Dict[str, str]] = None
 
+# Persistent report archive + per-check file-list inventories ("AnyDisk").
+REPORTS_FILE = Path(os.environ.get("PCCSERVER_DIR", str(Path(__file__).resolve().parent))) / "reports.jsonl"
+INV_DIR = Path(os.environ.get("PCCSERVER_DIR", str(Path(__file__).resolve().parent))) / "inventory"
+INV_DIR.mkdir(parents=True, exist_ok=True)
+# check_id -> {"entries": [{"path","size","m"}...], "exp": float}
+INV_CACHE: Dict[str, Dict[str, Any]] = {}
+
 
 # --------------------------------------------------------------------------
 # Small helpers
@@ -149,6 +158,128 @@ def prune(coll_deque: Deque[Tuple[float, str]], mapping: Dict[str, Any]) -> None
             mapping.pop(key, None)
         elif not isinstance(item, dict):
             mapping.pop(key, None)
+
+
+# --------------------------------------------------------------------------
+# Persistent report archive + per-check file inventories (AnyDisk)
+# --------------------------------------------------------------------------
+
+def _append_report(record: Dict[str, Any]) -> None:
+    """Append one accepted report to the archive. Never raises."""
+    try:
+        with open(REPORTS_FILE, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        log.exception("failed to append report to archive")
+
+
+def _load_persisted_reports() -> None:
+    """History survives restarts: load the last 5000 archived reports."""
+    try:
+        if not REPORTS_FILE.exists():
+            return
+        lines = REPORTS_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-5000:]
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(rec, dict) or not rec.get("code"):
+                continue
+            USED_CODES[(rec["code"] or "").upper()] = rec
+    except Exception:
+        log.exception("failed to load reports archive")
+
+
+def _report_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """Everything the admin UI needs for one player record."""
+    report = rec.get("report") or {}
+    counts = report.get("counts") or {}
+    fs = report.get("findings") or []
+    check_id = rec.get("id", "")
+    return {
+        "id": check_id,
+        "code": rec.get("code"),
+        "player": rec.get("player"),
+        "note": rec.get("admin_note", ""),
+        "verdict": rec.get("verdict"),
+        "forwarded": bool(rec.get("forwarded")),
+        "delivery": rec.get("delivery", ""),
+        "used_at": iso(rec.get("used_at")),
+        "pc_name": report.get("pc_name", ""),
+        "os": report.get("os", ""),
+        "user": report.get("discord_tag") or report.get("user") or "",
+        "duration_s": int(report.get("duration_s", 0)),
+        "files_scanned": int(counts.get("files_scanned", 0)),
+        "drives": int(counts.get("drives", 0)),
+        "findings": [{"severity": f.get("severity"), "name": f.get("name"),
+                      "path": f.get("path"), "detail": f.get("detail"),
+                      "source": f.get("source"), "hash": f.get("hash")}
+                     for f in fs[:500]],
+        "inv_parts": int(rec.get("inv_parts", 0)),
+        "has_inventory": (INV_DIR / f"inv-{check_id}.gz").exists(),
+    }
+
+
+def _load_inventory(check_id: str) -> Optional[List[Dict[str, Any]]]:
+    """Decompress a check's file list once and cache it in memory (LRU)."""
+    cached = INV_CACHE.get(check_id)
+    if cached and cached["exp"] > now():
+        return cached["entries"]
+    p = INV_DIR / f"inv-{check_id}.gz"
+    if not p.exists():
+        return None
+    try:
+        entries: List[Dict[str, Any]] = []
+        with gzip.open(p, "rt", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                bits = line.split("\t")
+                size = int(bits[1]) if len(bits) > 1 and bits[1].isdigit() else 0
+                entries.append({"path": bits[0], "size": size,
+                                "m": bits[2] if len(bits) > 2 else ""})
+    except Exception:
+        return None
+    if len(INV_CACHE) >= 8:
+        INV_CACHE.clear()
+    INV_CACHE[check_id] = {"entries": entries, "exp": now() + 1800}
+    return entries
+
+
+def _dir_listing(entries: List[Dict[str, Any]], path: str
+                 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Immediate children of `path`: (directories, files)."""
+    base = (path or "").replace("/", "\\")
+    if base and not base.endswith("\\"):
+        base += "\\"
+    base_l = base.lower()
+    dirs: Dict[str, Dict[str, Any]] = {}
+    files: List[Dict[str, Any]] = []
+    for e in entries:
+        p = e["path"]
+        if base_l and not p.lower().startswith(base_l):
+            continue
+        rest = p[len(base):] if p.lower().startswith(base_l) else p
+        if not rest:
+            continue
+        if "\\" in rest:
+            top = rest.split("\\", 1)[0]
+            d = dirs.get(top)
+            if d is None:
+                d = dirs[top] = {"name": top, "files": 0, "matched": 0, "size": 0}
+            d["files"] += 1
+            d["size"] += e["size"]
+            if e["m"]:
+                d["matched"] += 1
+        else:
+            files.append({"name": rest, "size": e["size"], "matched": bool(e["m"])})
+    dir_list = sorted(({"name": k, "files": v["files"], "matched": v["matched"],
+                        "size": v["size"]} for k, v in dirs.items()),
+                      key=lambda d: d["name"].lower())
+    files.sort(key=lambda s: s["name"].lower())
+    return dir_list, files
 
 
 def rate_limit(bucket: str, limit: int, window: float) -> None:
@@ -740,6 +871,63 @@ def admin_summary(code: str):
     return jsonify(used)
 
 
+@app.route("/admin/api/reports", methods=["GET"])
+@admin_required
+def admin_reports():
+    """Search the persistent player archive by player name, code, check ID,
+    PC name or Discord tag. The archive survives restarts."""
+    q = clean_str(request.args.get("q"), 80).strip().lower()
+    limit = max(1, min(int(request.args.get("limit", 50) or 50), 300))
+    with LOCK:
+        recs = sorted(USED_CODES.values(),
+                      key=lambda r: r.get("used_at", 0), reverse=True)
+    items = []
+    for r in recs:
+        if q:
+            hay = " ".join(str(r.get(k, "")) for k in
+                           ("player", "id", "code", "verdict", "admin_note"))
+            rpt = r.get("report") or {}
+            hay += " " + " ".join(str(rpt.get(k, "")) for k in
+                                  ("pc_name", "discord_tag", "user", "server_label"))
+            if q not in hay.lower():
+                continue
+        items.append(_report_summary(r))
+        if len(items) >= limit:
+            break
+    return jsonify({"ok": True, "count": len(items), "items": items})
+
+
+@app.route("/admin/api/reports/<check_id>", methods=["GET"])
+@admin_required
+def admin_report_detail(check_id: str):
+    with LOCK:
+        rec = next((r for r in USED_CODES.values()
+                    if r.get("id") == (check_id or "").strip()), None)
+    if rec is None:
+        return json_error("not_found", 404)
+    return jsonify({"ok": True, "record": _report_summary(rec)})
+
+
+@app.route("/admin/api/inventory/<check_id>", methods=["GET"])
+@admin_required
+def admin_inventory(check_id: str):
+    """AnyDisk: browse or search one check's uploaded file list."""
+    q = clean_str(request.args.get("q"), 120).strip().lower()
+    path = clean_str(request.args.get("path"), 700)
+    entries = _load_inventory((check_id or "").strip())
+    if entries is None:
+        return json_error("no_inventory", 404)
+    if q:
+        hits = [e for e in entries if q in e["path"].lower()][:300]
+        return jsonify({"ok": True, "mode": "search", "count": len(hits),
+                        "entries": hits,
+                        "total_files": len(entries)})
+    dirs, files = _dir_listing(entries, path)
+    return jsonify({"ok": True, "mode": "dir", "path": path,
+                    "total_files": len(entries),
+                    "dirs": dirs, "files": files})
+
+
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
@@ -868,9 +1056,16 @@ def report():
         "forwarded": forwarded,
         "delivery": note,
         "processing_s": round(now() - started, 2),
+        # One-time token used by the client to push its file list (AnyDisk)
+        # for this check. Short-lived: the list must arrive within 6 hours.
+        "inv_token": secrets.token_hex(16),
+        "inv_expires": now() + 6 * 3600,
+        "inv_parts": 0,
+        "inv_bytes": 0,
     }
     with LOCK:
         USED_CODES[code] = record
+        _append_report(record)
         if len(USED_CODES) > 2000:
             for k in list(USED_CODES.keys())[:-2000]:
                 USED_CODES.pop(k, None)
@@ -881,8 +1076,57 @@ def report():
 
     # A 200 tells the client its result reached the server. It is not a lie:
     # the report is persisted even if the webhook is misconfigured, and the
-    # admin page shows the forwarding status.
-    return jsonify({"ok": True, "verdict": verdict, "code": code, "check": check["id"]})
+    # admin page shows the forwarding status. `check` + `inv_token` let the
+    # client upload its file list afterwards.
+    return jsonify({"ok": True, "verdict": verdict, "code": code,
+                    "check": check["id"], "inv_token": record["inv_token"]})
+
+
+@app.route("/api/inventory", methods=["POST"])
+def api_inventory():
+    """Receive one gzip part of a check's file list ("AnyDisk" data).
+
+    Each part is an independent gzip member of a TSV: path, size, flag.
+    The server appends members to the same .gz file, which gzip readers
+    decompress as one stream. The token comes from /report and is valid
+    for 6 hours.
+    """
+    rate_limit("inventory", 40, 3600)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return json_error("invalid_json", 400)
+    check_id = clean_str(data.get("check_id"), 40)
+    token = clean_str(data.get("token"), 80)
+    payload = data.get("data")
+    if not (check_id and token and isinstance(payload, str) and payload):
+        return json_error("missing_fields", 400)
+    with LOCK:
+        rec = next((r for r in USED_CODES.values()
+                    if r.get("id") == check_id), None)
+        if rec is None:
+            return json_error("unknown_check", 404)
+        if rec.get("inv_token") != token:
+            return json_error("bad_token", 403)
+        if now() > float(rec.get("inv_expires", 0)):
+            return json_error("token_expired", 403)
+        if int(rec.get("inv_parts", 0)) >= 60:
+            return json_error("too_many_parts", 400)
+        try:
+            raw = base64.b64decode(payload)
+        except Exception:
+            return json_error("bad_payload", 400)
+        if len(raw) > 3 * 1024 * 1024:
+            return json_error("part_too_large", 400)
+        dest = INV_DIR / f"inv-{check_id}.gz"
+        try:
+            with open(dest, "ab") as fh:
+                fh.write(raw)
+        except OSError:
+            return json_error("storage", 500)
+        rec["inv_parts"] = int(rec.get("inv_parts", 0)) + 1
+        rec["inv_bytes"] = int(rec.get("inv_bytes", 0)) + len(raw)
+        INV_CACHE.pop(check_id, None)
+    return jsonify({"ok": True, "parts": int(rec["inv_parts"])})
 
 
 # --------------------------------------------------------------------------
@@ -963,3 +1207,8 @@ if __name__ == "__main__":
         log.warning("Missing secret DISCORD_WEBHOOK_URL - reports will be stored but not sent")
     port = int(os.environ.get("PORT", "3000"))
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
+
+
+# Load the report archive as soon as the module is imported (flask --app app
+# imports instead of running __main__, so this must live at import time).
+_load_persisted_reports()
