@@ -13,12 +13,12 @@
 <body>
 <main class="wrap">
   <section class="card hero">
-    <div class="logo">PC</div>
+    <div class="logo"><img src="/static/assets/logo.jpg" alt="Eren Guard" width="86" height="86"></div>
     <h1>{{ app_name }}</h1>
     <p class="lede">An integrity scan for our PVP community.</p>
 
     {% if has_download %}
-      <a class="btn btn-big" href="/download">Download PC Check</a>
+      <a class="btn btn-big" href="/download">Download {{ app_name }}</a>
       <p class="tiny">Windows 10/11 &middot; one file &middot; nothing installs</p>
     {% else %}
       <div class="warn-box">The client is not uploaded yet. The server owner still has to build it.</div>
