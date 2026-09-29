@@ -191,6 +191,50 @@ def _load_persisted_reports() -> None:
         log.exception("failed to load reports archive")
 
 
+# Human-friendly labels for the cheat "types" (signature tags). Anything not
+# in here is shown with its raw tag so the admin always knows what matched.
+TYPE_LABELS = {
+    "aimbot": "Aimbot", "aimbot2": "Aimbot", "aimassist": "Aim Assist",
+    "aim-assist": "Aim Assist", "silentaim": "Silent Aim", "silent-aim": "Silent Aim",
+    "esp": "ESP / Wallhack", "wallhack": "ESP / Wallhack", "wallhack2": "ESP / Wallhack",
+    "radar": "Radar / ESP", "esp-radar": "Radar / ESP",
+    "norecoil": "No-Recoil", "no-recoil": "No-Recoil", "recoilmacro": "Recoil Macro",
+    "nospread": "No-Spread", "rapidfire": "Rapid Fire", "rapid-fire": "Rapid Fire",
+    "triggerbot": "Triggerbot", "trigger-bot": "Triggerbot",
+    "injector": "Injector", "loader": "Injector / Loader", "kdmapper": "KDMapper",
+    "cheatengine": "Cheat Engine", "ce": "Cheat Engine",
+    "spoofer": "HWID Spoofer", "hwid": "HWID Spoofer", "hwid2": "HWID Spoofer",
+    "macro": "Macro", "macros": "Macro",
+    "modmenu": "Mod Menu", "menu": "Mod Menu", "eulen": "Eulen",
+    "fivem": "FiveM module", "clientopt": "Custom client.lua",
+    "hash_blacklist": "Known cheat hash",
+}
+_SEV_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def type_label(tag: Any) -> str:
+    return TYPE_LABELS.get(str(tag or "").lower(), str(tag or "unknown"))
+
+
+def cheat_types(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Distinct cheat types found in a report, most severe first.
+
+    Each entry: {"type": label, "tag": raw tag, "count": hits, "sev": worst}.
+    """
+    agg: Dict[str, Dict[str, Any]] = {}
+    for f in findings:
+        tag = str(f.get("tag") or "unknown").lower()
+        sev = str(f.get("severity") or "low")
+        cur = agg.setdefault(tag, {"type": type_label(tag), "tag": tag,
+                                   "count": 0, "sev": sev})
+        cur["count"] += 1
+        if _SEV_RANK.get(sev, 3) < _SEV_RANK.get(cur["sev"], 3):
+            cur["sev"] = sev
+    out = list(agg.values())
+    out.sort(key=lambda t: (_SEV_RANK.get(t["sev"], 3), -t["count"]))
+    return out
+
+
 def _report_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
     """Everything the admin UI needs for one player record."""
     report = rec.get("report") or {}
@@ -216,6 +260,7 @@ def _report_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
                       "path": f.get("path"), "detail": f.get("detail"),
                       "source": f.get("source"), "hash": f.get("hash")}
                      for f in fs[:500]],
+        "types": cheat_types(fs),
         "inv_parts": int(rec.get("inv_parts", 0)),
         "has_inventory": (INV_DIR / f"inv-{check_id}.gz").exists(),
     }
@@ -607,6 +652,12 @@ def build_discord_message(check: Dict[str, Any], report: Dict[str, Any], verdict
         cov_bits.append(f"finding list truncated in: {clip(', '.join(saturated), 120)}")
     coverage = "\n".join(f"\u2022 {c}" for c in cov_bits)
 
+    # One-line cheat-type summary so the owner can see at a glance what kind
+    # of cheat was found, not just how many hits.
+    types_summary = ", ".join(
+        f"{t['type']} \u00d7{t['count']}" for t in cheat_types(findings)
+    ) or "none"
+
     colour = {"CHEATER": 0xE74C3C, "SUSPICIOUS": 0xE67E22}.get(verdict, 0x2ECC71)
     title = f"{verdict} \u2014 {player}{mention}"
     if verdict == "CHEATER":
@@ -626,6 +677,7 @@ def build_discord_message(check: Dict[str, Any], report: Dict[str, Any], verdict
             {"name": "Code / check ID", "value": f"{check['code']} \u00b7 {check['id']}", "inline": False},
             {"name": "OS", "value": clip(report.get("os"), 250), "inline": False},
             {"name": "Coverage", "value": coverage, "inline": False},
+            {"name": "Cheat types", "value": types_summary, "inline": False},
             {"name": f"\U0001F534 HIGH ({len(high)})", "value": findings_block(findings, "high", 8)[:1000],
              "inline": False},
             {"name": f"\U0001F7E0 MEDIUM ({len(med)})", "value": findings_block(findings, "medium", 8)[:1000],
@@ -926,6 +978,44 @@ def admin_inventory(check_id: str):
     return jsonify({"ok": True, "mode": "dir", "path": path,
                     "total_files": len(entries),
                     "dirs": dirs, "files": files})
+
+
+@app.route("/admin/api/catalog", methods=["GET"])
+@admin_required
+def admin_catalog():
+    """Cheat-type catalog: every tag in the signature DB, grouped by severity.
+
+    Lets the owner see which cheat types PC Check actually looks for, so a
+    "player X is a cheater" verdict can be understood as a specific type.
+    """
+    data = load_signatures()
+    cat = data.get("categories") or {}
+    seen: Dict[str, Dict[str, Any]] = {}
+    for sev in ("high", "medium", "low"):
+        for raw in cat.get(sev) or []:
+            if not isinstance(raw, dict):
+                continue
+            tag = str(raw.get("tag") or sev)
+            pats = [str(n) for n in (raw.get("names") or []) if isinstance(n, str)]
+            paths = [str(p) for p in (raw.get("paths") or []) if isinstance(p, str)]
+            exts = [str(e) for e in (raw.get("exts") or []) if isinstance(e, str)]
+            key = tag.lower()
+            cur = seen.get(key)
+            if cur is None:
+                cur = seen[key] = {"type": type_label(tag), "tag": tag,
+                                   "sev": sev, "patterns": [], "exts": []}
+            cur["patterns"].extend(pats)
+            cur["patterns"].extend(paths)
+            cur["exts"].extend(exts)
+            if _SEV_RANK.get(sev, 3) < _SEV_RANK.get(cur["sev"], 3):
+                cur["sev"] = sev
+    items = sorted(seen.values(),
+                   key=lambda t: (_SEV_RANK.get(t["sev"], 3), t["type"].lower()))
+    for it in items:
+        it["patterns"] = sorted({p for p in it["patterns"] if p})
+        it["exts"] = sorted({e for e in it["exts"] if e})
+    return jsonify({"ok": True, "version": data.get("version"),
+                    "items": items})
 
 
 # --------------------------------------------------------------------------
