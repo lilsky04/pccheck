@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>One-time check - {{ app_name }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="centered">
+<main class="wrap narrow">
+  {% if not code %}
+    <section class="card">
+      <h1>Link expired or already used</h1>
+      <p>Every check link works <strong>once</strong> and stops working after a short while.
+         Ask a staff member for a fresh link.</p>
+    </section>
+  {% else %}
+    <section class="card">
+      <div class="logo">PC</div>
+      <h1>Your PC Check</h1>
+      <p>You were asked to run an integrity scan. Your personal code is
+         <strong class="code">{{ code }}</strong>.</p>
+      <ol class="steps">
+        <li>Download the file.</li>
+        <li>Read the window that opens, then choose Accept or Decline.</li>
+        <li>Wait for the scan to finish, then read the summary.</li>
+      </ol>
+      <a class="btn btn-big" href="/download">Download PC Check</a>
+      <p class="tiny">Nothing is scanned before you press Accept, and only cheat-related
+         findings are sent. Declining is always allowed and nothing is reported.</p>
+    </section>
+  {% endif %}
+</main>
+</body>
+</html>
