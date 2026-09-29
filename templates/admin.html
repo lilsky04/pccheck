@@ -17,13 +17,28 @@
     <p class="tiny">
       signatures <strong>{{ sig_version }}</strong> &middot;
       high {{ sig_counts.get('high', 0) }} / medium {{ sig_counts.get('medium', 0) }} / low {{ sig_counts.get('low', 0) }} &middot;
-      webhook {% if webhook_ok %}<span class="ok">configured</span>{% else %}<span class="bad">MISSING</span>{% endif %}
+      delivery <span class="ok">admin site only</span> (nothing is sent to Discord)
     </p>
     <p class="tiny">
       Players are identified by the Discord ID they type into the client.
       There are no one-time codes anymore. Send a player
       <a href="{{ base }}/go/">this link</a> and they download the client directly.
     </p>
+  </section>
+
+  <section class="card">
+    <div class="bar">
+      <h2>Messages</h2>
+      <div class="controls">
+        <button class="btn" type="button" id="msgreload">Refresh</button>
+        <label class="tiny"><input type="checkbox" id="msgauto" checked> auto (10s)</label>
+      </div>
+    </div>
+    <p class="tiny">Every player check lands here as a message: their <strong>Discord ID</strong>,
+       whether the verdict is <strong>CHEATER</strong> or <strong>CLEAN</strong>, and the
+       <strong>file names</strong> that matched. This replaces the old Discord webhook &mdash;
+       reports are read only here, they never leave this server.</p>
+    <div id="msglist" class="msglist"><p class="dim">Loading...</p></div>
   </section>
 
   <section class="card">
@@ -34,9 +49,7 @@
       {% for r in used %}
         <tr data-id="{{ r.id }}" class="v-{{ r.verdict|lower }}">
           <td class="code">{{ r.player or '' }}</td>
-          <td><span class="badge {{ r.verdict|lower }}">{{ r.verdict }}</span>
-              {% if not r.forwarded %}<span class="badge warn">not delivered</span>{% endif %}
-          </td>
+          <td><span class="badge {{ r.verdict|lower }}">{{ r.verdict }}</span></td>
           <td class="dim">
             {% set f = r.report.findings %}
             {{ f|selectattr('severity','equalto','high')|list|length }}H /
@@ -124,6 +137,61 @@ function tick() {
 tick();
 setInterval(tick, 60000);
 
+// ---------- Messages feed (inbox of incoming reports) ----------
+let MSGSEEN = {};
+let MSGTIMER = null;
+
+function ago(iso) {
+  const d = new Date(iso);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
+  return Math.floor(mins / 1440) + 'd ago';
+}
+
+async function loadMessages() {
+  const box = $('#msglist');
+  try {
+    const res = await fetch('/admin/api/messages?limit=50');
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || res.status);
+    if (!data.items.length) { box.innerHTML = '<p class="dim">No messages yet. They appear here the moment a player runs a check.</p>'; return; }
+    box.innerHTML = data.items.map((m) => {
+      const isNew = !(m.id in MSGSEEN);
+      const files = (m.files || []).slice(0, 12).map((f) =>
+        '<li><span class="badge ' + esc(f.severity) + '">' + esc(f.severity) + '</span> <code>' +
+        esc(f.name) + '</code><br><span class="dim tiny mon">' + esc(f.path) + '</span></li>').join('');
+      const more = (m.files || []).length > 12
+        ? '<li class="dim tiny">&hellip; and ' + (m.total_findings - 12) + ' more finding(s)</li>' : '';
+      const clean = m.verdict === 'CLEAN'
+        ? '<p class="ok">&#10004; Nothing found. Clean.</p>'
+        : '<p class="bad">&#9888; ' + m.total_findings + ' finding(s):</p><ul class="msgfiles">' + files + more + '</ul>';
+      return '<div class="msg ' + esc(m.verdict).toLowerCase() + (isNew ? ' fresh' : '') + '">' +
+        '<div class="msghead"><strong class="code">' + esc(m.discord_id || 'no id') + '</strong>' +
+        '<span class="badge ' + esc(m.verdict).toLowerCase() + '">' + esc(m.verdict) + '</span>' +
+        '<span class="dim tiny">' + esc(m.used_at.replace('T', ' ').slice(0, 19)) + ' &middot; ' + ago(m.used_at) + '</span>' +
+        '<span class="dim tiny">check ' + esc(m.id) + '</span>' +
+        (m.pc_name ? '<span class="dim tiny">' + esc(m.pc_name) + '</span>' : '') +
+        '<span style="flex:1"></span>' +
+        '<button class="btn tiny-btn" data-view="' + esc(m.id) + '">View</button>' +
+        '<button class="btn tiny-btn" data-anydisk="' + esc(m.id) + '">AnyDisk</button>' +
+        '</div>' + clean + '</div>';
+    }).join('');
+    data.items.forEach((m) => { MSGSEEN[m.id] = true; });
+  } catch (err) {
+    box.innerHTML = '<p class="bad">Could not load messages: ' + esc(err.message) + '</p>';
+  }
+}
+
+function startMsgAuto() {
+  if (MSGTIMER) clearInterval(MSGTIMER);
+  if ($('#msgauto').checked) MSGTIMER = setInterval(loadMessages, 10000);
+}
+
+loadMessages();
+startMsgAuto();
+
 // ---------- Player archive (search + detail) ----------
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -165,7 +233,7 @@ async function openDetail(id) {
     (r.files_scanned || 0) + ' files scanned &middot; ' + (r.duration_s || 0) + 's</p>' +
     '<p><span class="badge ' + esc(r.verdict).toLowerCase() + '">' + esc(r.verdict) + '</span>' +
     (r.has_inventory ? ' <span class="ok">file list uploaded</span>' : ' <span class="bad">no file list</span>') +
-    (r.forwarded ? ' &middot; <span class="ok">delivered to Discord</span>' : ' &middot; <span class="badge warn">not delivered</span>') +
+    (r.forwarded ? ' &middot; <span class="ok">delivered to admin site</span>' : ' &middot; <span class="badge warn">not delivered</span>') +
     (r.delivery ? ' <span class="dim tiny">(' + esc(r.delivery) + ')</span>' : '') + '</p>' +
     '<p class="tiny">Discord ID: <strong>' + esc(r.player || '&mdash;') + '</strong>' +
     (r.user ? ' &middot; label: ' + esc(r.user) : '') + '</p>' +
@@ -292,6 +360,8 @@ $('#archq').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchAr
 $('#invopen').addEventListener('click', invOpen);
 $('#invfind').addEventListener('click', invFind);
 $('#invq').addEventListener('keydown', (e) => { if (e.key === 'Enter') invFind(); });
+$('#msgreload').addEventListener('click', loadMessages);
+$('#msgauto').addEventListener('change', startMsgAuto);
 
 document.addEventListener('click', async (ev) => {
   const view = ev.target.dataset.view;
