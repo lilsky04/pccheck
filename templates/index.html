@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{ app_name }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="wrap">
+  <section class="card hero">
+    <div class="logo">PC</div>
+    <h1>{{ app_name }}</h1>
+    <p class="lede">An integrity scan for our PVP community.</p>
+
+    {% if has_download %}
+      <a class="btn btn-big" href="/download">Download PC Check</a>
+      <p class="tiny">Windows 10/11 &middot; one file &middot; nothing installs</p>
+    {% else %}
+      <div class="warn-box">The client is not uploaded yet. The server owner still has to build it.</div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>You receive a one-time link from a staff member. The link is personal to you.</li>
+      <li>You open the file and read exactly what gets scanned.</li>
+      <li>You press <strong>Accept</strong> or <strong>Decline</strong>. If you decline, nothing is scanned at all.</li>
+      <li>The scan runs, shows you everything it found, and sends only the findings to the server owner.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>What is <em>not</em> collected</h2>
+    <ul class="no-list">
+      <li>No personal files. No documents, pictures or videos.</li>
+      <li>No browser data: no history, no cookies, no saved passwords.</li>
+      <li>No Discord tokens, no logins, no screenshots, no keystrokes.</li>
+      <li>No IP address, no hardware serial numbers, no username of your Windows account.</li>
+    </ul>
+    <p class="tiny">The only things sent are the names, file paths and SHA-256 hashes of files that
+      match a known cheat or macro signature, plus your PC name and Windows version.</p>
+  </section>
+
+  <section class="card">
+    <h2>Why we do this</h2>
+    <p>Cheats ruin matches for everyone. A scan that only looks for <em>known</em> cheat and macro
+      software keeps our players safe and keeps this server fair. A clean result means nothing
+      suspicious was found, not that you were accused of anything.</p>
+    {% if contact %}
+      <p class="tiny">Questions? Ask <strong>{{ contact }}</strong>.</p>
+    {% endif %}
+  </section>
+
+  <footer class="foot">
+    <span>By continuing you confirm you understand what the scan reads.</span>
+  </footer>
+</main>
+</body>
+</html>
