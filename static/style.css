@@ -118,6 +118,12 @@ tr.dead { opacity: .4; }
 .badge.suspicious { background: #3a2a10; color: #ffc078; }
 .badge.clean { background: #12301f; color: #7ee2a8; }
 .badge.warn { background: #2a2130; color: #c9a0ff; margin-left: 4px; }
+.chiprow { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.chiprow:empty { display: none; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .03em; border: 1px solid; }
+.chip.high { background: rgba(231,76,60,.12); color: #ff8a7d; border-color: #5c2a26; }
+.chip.medium { background: rgba(230,126,34,.12); color: #ffc078; border-color: #5c4526; }
+.chip.low { background: rgba(241,196,15,.08); color: #e8d68a; border-color: #4a4526; }
 .ok { color: var(--ok); }
 .bad { color: var(--bad); }
 
