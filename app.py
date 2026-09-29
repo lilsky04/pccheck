@@ -3,9 +3,10 @@ PC Check backend - single-file Flask app for Replit.
 
 Security model
 --------------
-1. The Discord webhook URL is read from the Replit Secret DISCORD_WEBHOOK_URL.
-   It is never exposed to the client: it is never returned by any endpoint,
-   never logged, and never part of the download.
+1. Every accepted /report is stored in the persistent archive on this
+   server, and is shown to the admin inside the admin site itself (the
+   "Messages" feed). No report data is sent to Discord, GitHub or any
+   external service anymore - nothing leaves the server.
 2. The admin area is protected by a login page + signed session cookie
    (ADMIN_PASSWORD from Replit Secrets). Admin HTML/JSON is served only to
    authenticated sessions.
@@ -69,7 +70,6 @@ COOKIE_NAME = "pccheck_admin"
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") not in ("0", "false", "False")
 TRUST_PROXY = os.environ.get("TRUST_PROXY", "1") not in ("0", "false", "False")
 
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH", "").strip()
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin").strip() or "admin"
@@ -89,7 +89,7 @@ app.config["JSON_SORT_KEYS"] = False
 SECRET = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.secret_key = SECRET
 
-# Never let a stray handler or werkzeug dump the webhook into the logs.
+# Never let a stray handler or werkzeug dump secrets into the logs.
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
 log = logging.getLogger("pccheck")
 log.setLevel(logging.INFO)
@@ -103,7 +103,6 @@ REVOKED_TTL: Deque[Tuple[float, str]] = deque()
 REPORTS: Dict[str, Dict[str, Any]] = {}
 RATE: Dict[Tuple[str, str], Deque[float]] = {}
 SIG_CACHE: Dict[str, Any] = {"data": None, "expires": 0.0}
-GH: Optional[Dict[str, str]] = None
 
 # Persistent report archive + per-check file-list inventories ("AnyDisk").
 REPORTS_FILE = Path(os.environ.get("PCCSERVER_DIR", str(Path(__file__).resolve().parent))) / "reports.jsonl"
@@ -561,7 +560,7 @@ def validate_payload(data: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]
 
 
 # --------------------------------------------------------------------------
-# Verdict + Discord
+# Verdict
 # --------------------------------------------------------------------------
 
 def compute_verdict(findings: list) -> Tuple[str, str]:
@@ -575,214 +574,14 @@ def compute_verdict(findings: list) -> Tuple[str, str]:
     return "CLEAN", "low"
 
 
-def clip(text: str, limit: int) -> str:
-    text = text or "\u2014"
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "\u2026"
-
-
-def findings_block(findings: list, severity: str, cap: int) -> str:
-    rows = [f for f in findings if f.get("severity") == severity]
-    if not rows:
-        return "_none_"
-    lines = []
-    for f in rows[:cap]:
-        name = clip(f.get("name"), 70)
-        path = clip(f.get("path"), 78)
-        sha = f.get("hash") or "-"
-        src = f.get("source") or "-"
-        lines.append(f"`{name}`\n{path}\nsha256: `{clip(sha, 20)}` \u00b7 {src}")
-    if len(rows) > cap:
-        lines.append(f"_...and {len(rows) - cap} more {severity} finding(s) truncated_")
-    return "\n\n".join(lines)
-
-
-def build_discord_message(check: Dict[str, Any], report: Dict[str, Any], verdict: str) -> Dict[str, Any]:
-    findings = report.get("findings", [])
-    high = [f for f in findings if f["severity"] == "high"]
-    med = [f for f in findings if f["severity"] == "medium"]
-    low = [f for f in findings if f["severity"] == "low"]
-
-    # The report carries whatever the player typed, and player is the Discord
-    # ID they claimed - that is the identity of the run.
-    player_bits = [b for b in (report.get("discord_id"),
-                               report.get("discord_tag"),
-                               report.get("user"), report.get("server_label"),
-                               check.get("player")) if b]
-    player = ", ".join(player_bits) if player_bits else "unknown"
-    if len(player) > 250:
-        player = player[:249] + "\u2026"
-
-    pc = clip(report.get("pc_name") or "unknown", 60)
-    # A raw snowflake typed in the Discord box is unlikely, but if it is one
-    # we can turn it into a real ping. Cloned digits are used so a webhook
-    # cannot learn the player's real id from the ping.
-    if report.get("discord_id", "").isdigit() and len(report["discord_id"]) == 18:
-        mention = f"(<@{int(report['discord_id']) + 1}>)"
-    else:
-        mention = ""
-
-    finished = "yes" if report.get("finished") else "**NO - scan was interrupted**"
-    errors = report.get("errors") or []
-    err_line = ("\n".join(f"\u2022 {clip(e, 120)}" for e in errors[:5])
-                if errors else "none")
-
-    # Coverage tells the owner how much of the disk was actually read, so a
-    # clean result from a partial scan is not mistaken for a full one.
-    counts = report.get("counts") or {}
-    cov_bits = [f"{int(counts.get('files_scanned', 0)):,} files on "
-                f"{counts.get('drives', 0)} drive(s)"]
-    if not report.get("elevated"):
-        cov_bits.append("run was **not elevated** \u2014 Prefetch unreadable")
-    saturated = counts.get("saturated_sources") or []
-    if saturated:
-        cov_bits.append(f"finding list truncated in: {clip(', '.join(saturated), 120)}")
-    coverage = "\n".join(f"\u2022 {c}" for c in cov_bits)
-
-    # One-line cheat-type summary so the owner can see at a glance what kind
-    # of cheat was found, not just how many hits.
-    types_summary = ", ".join(
-        f"{t['type']} \u00d7{t['count']}" for t in cheat_types(findings)
-    ) or "none"
-
-    colour = {"CHEATER": 0xE74C3C, "SUSPICIOUS": 0xE67E22}.get(verdict, 0x2ECC71)
-    title = f"{verdict} \u2014 {player}{mention}"
-    if verdict == "CHEATER":
-        title = f"\U0001F534 CHEATER \u2014 {player}{mention}"
-    elif verdict == "SUSPICIOUS":
-        title = f"\U0001F7E0 SUSPICIOUS \u2014 {player}{mention}"
-    else:
-        title = f"\U0001F7E2 CLEAN \u2014 {player}{mention}"
-
-    embeds = [{
-        "title": clip(title, 256),
-        "color": colour,
-        "fields": [
-            {"name": "PC", "value": clip(pc, 100), "inline": True},
-            {"name": "Scan duration", "value": f"{report.get('duration_s', 0)}s", "inline": True},
-            {"name": "Scan finished", "value": finished, "inline": True},
-            {"name": "Code / check ID", "value": f"{check.get('code') or 'discord'} \u00b7 {check['id']}", "inline": False},
-            {"name": "OS", "value": clip(report.get("os"), 250), "inline": False},
-            {"name": "Coverage", "value": coverage, "inline": False},
-            {"name": "Cheat types", "value": types_summary, "inline": False},
-            {"name": f"\U0001F534 HIGH ({len(high)})", "value": findings_block(findings, "high", 8)[:1000],
-             "inline": False},
-            {"name": f"\U0001F7E0 MEDIUM ({len(med)})", "value": findings_block(findings, "medium", 8)[:1000],
-             "inline": False},
-            {"name": f"\U0001F7E1 LOW ({len(low)})", "value": findings_block(findings, "low", 5)[:700],
-             "inline": False},
-            {"name": "Scan notes", "value": f"errors: {err_line}"[:1000], "inline": False},
-        ],
-        "footer": {"text": f"check {check['id']}"},
-    }]
-    return {"username": f"{APP_NAME} Report", "embeds": embeds}
-
-
-def github_summary(check: Dict[str, Any], report: Dict[str, Any], verdict: str) -> str:
-    findings = report.get("findings", [])
-    counts = " / ".join(
-        f"{sev.upper()} {sum(1 for f in findings if f['severity'] == sev)}"
-        for sev in ("high", "medium", "low")
-    )
-    lines = [
-        "**PC Check report**",
-        "",
-        f"- Verdict: **{verdict}**",
-        f"- Player: {report.get('discord_tag') or report.get('user') or 'unknown'}"
-        f"{' (<@' + report['discord_id'] + '>)' if report.get('discord_id', '').isdigit() else ''}",
-        f"- PC: `{report.get('pc_name')}`",
-        f"- OS: {report.get('os')}",
-        f"- Check: `{check['id']}`",
-        f"- Duration: {report.get('duration_s')}s \u00b7 finished: {report.get('finished')}",
-        f"- Findings: {counts}",
-        "",
-    ]
-    for sev in ("high", "medium", "low"):
-        rows = [f for f in findings if f["severity"] == sev]
-        lines.append(f"### {sev.upper()} ({len(rows)})")
-        if not rows:
-            lines.append("_none_")
-        for f in rows[:25]:
-            lines.append(f"- `{f['name']}`\n  - {f['path']}\n  - sha256 `{f['hash'] or '-'}` \u00b7 {f['source']}")
-        if len(rows) > 25:
-            lines.append(f"- _...{len(rows) - 25} more_")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def forward_to_discord(check: Dict[str, Any], report: Dict[str, Any], verdict: str) -> Tuple[bool, str]:
-    """Never raises. Returns (delivered, channel_note)."""
-    if not DISCORD_WEBHOOK_URL:
-        log.warning("DISCORD_WEBHOOK_URL secret is not set - report %s stored but not forwarded",
-                    check["id"])
-        return github_fallback(check, report, verdict, "webhook secret not configured")
-
-    payload = build_discord_message(check, report, verdict)
-    hook = DISCORD_WEBHOOK_URL
-    url = hook
-    detail = "webhook rejected"
-
-    for _ in range(3):
-        try:
-            resp = requests.post(url, json=payload, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
-        except Exception as exc:
-            return github_fallback(check, report, verdict, f"webhook request failed: {type(exc).__name__}")
-
-        if resp.status_code == 429:
-            wait = min(float(resp.headers.get("X-Rate-Limit-Reset-After", "1")), 3.0)
-            time.sleep(max(0.2, wait))
-            if "?" not in url:
-                url = f"{hook}?wait=true"   # queue instead of dropping
-            detail = "webhook rate limited"
-            continue
-        if resp.status_code in (200, 201, 204):
-            return True, "discord"
-        if resp.status_code in (401, 403):
-            detail = f"webhook auth failed (HTTP {resp.status_code}) - wrong URL or missing permission"
-            break
-        if resp.status_code == 400:
-            detail = "webhook rejected the embed (HTTP 400) - embed too large?"
-            break
-        if resp.status_code >= 500:
-            time.sleep(0.7)
-            detail = f"webhook HTTP {resp.status_code}"
-            continue
-        detail = f"webhook HTTP {resp.status_code}"
-        break
-
-    return github_fallback(check, report, verdict, detail)
-
-
-def github_fallback(check: Dict[str, Any], report: Dict[str, Any],
-                    verdict: str, reason: str) -> Tuple[bool, str]:
-    """Backup channel: post the markdown summary as a GitHub issue comment.
-
-    Replit's built-in fetch blocks github.com, but requests works. This is a
-    reliable "did you get it?" path when the webhook is misconfigured.
-    """
-    global GH
-    try:
-        if not GH:
-            token = os.environ.get("GITHUB_TOKEN", "").strip()
-            repo = os.environ.get("GITHUB_REPO", "").strip()   # owner/name
-            number = os.environ.get("GITHUB_ISSUE", "").strip()
-            if not (token and repo and number):
-                return False, reason
-            GH = {"token": token, "repo": repo, "number": number}
-        resp = requests.post(
-            f"https://api.github.com/repos/{GH['repo']}/issues/{GH['number']}/comments",
-            headers={"Authorization": f"Bearer {GH['token']}",
-                     "User-Agent": USER_AGENT,
-                     "Accept": "application/vnd.github+json"},
-            json={"body": github_summary(check, report, verdict)},
-            timeout=TIMEOUT,
-        )
-        if resp.status_code in (200, 201):
-            return True, f"github fallback ({reason})"
-        return False, f"{reason}; github fallback HTTP {resp.status_code}"
-    except Exception as exc:
-        return False, f"{reason}; fallback failed: {type(exc).__name__}"
+def deliver_to_admin_site(check: Dict[str, Any], report: Dict[str, Any], verdict: str) -> Tuple[bool, str]:
+    """In-app delivery only. The report is already saved in the archive, which
+    the admin site reads as a "message". Nothing is sent to Discord or GitHub
+    anymore - no external call leaves the server. Never raises.
+    Returns (delivered, channel_note)."""
+    log.info("report %s delivered to the admin site (player=%s verdict=%s)",
+             check["id"], check.get("player") or report.get("discord_id"), verdict)
+    return True, "admin site"
 
 
 # --------------------------------------------------------------------------
@@ -842,7 +641,6 @@ def admin_home():
         used=recent,
         sig_version=data.get("version", "?"),
         sig_counts={k: len(v) for k, v in (data.get("categories") or {}).items()},
-        webhook_ok=bool(DISCORD_WEBHOOK_URL),
         base=base_url(),
     )
 
@@ -885,6 +683,34 @@ def admin_report_detail(check_id: str):
     if rec is None:
         return json_error("not_found", 404)
     return jsonify({"ok": True, "record": _report_summary(rec)})
+
+
+@app.route("/admin/api/messages", methods=["GET"])
+@admin_required
+def admin_messages():
+    """Inbox of incoming reports: one message per check, newest first, with
+    the player's Discord ID, the verdict, and the file names that matched.
+    This is the replacement for the old Discord webhook: reports are read
+    here, inside the admin site, and never leave this server."""
+    limit = max(1, min(int(request.args.get("limit", 50) or 50), 200))
+    with LOCK:
+        recs = sorted(REPORTS.values(),
+                      key=lambda r: r.get("used_at", 0), reverse=True)[:limit]
+    items = []
+    for r in recs:
+        report = r.get("report") or {}
+        fs = report.get("findings") or []
+        items.append({
+            "id": r.get("id"),
+            "discord_id": r.get("player") or report.get("discord_id") or "",
+            "verdict": r.get("verdict"),
+            "used_at": iso(r.get("used_at")),
+            "pc_name": report.get("pc_name", ""),
+            "files": [{"name": f.get("name"), "path": f.get("path"),
+                       "severity": f.get("severity")} for f in fs[:60]],
+            "total_findings": len(fs),
+        })
+    return jsonify({"ok": True, "count": len(items), "items": items})
 
 
 @app.route("/admin/api/inventory/<check_id>", methods=["GET"])
@@ -975,7 +801,7 @@ def health():
         "ok": True,
         "app": APP_NAME,
         "sig_version": load_signatures().get("version", "?"),
-        "webhook_configured": bool(DISCORD_WEBHOOK_URL),
+        "delivery": "admin-site",
         "admin_password_set": bool(ADMIN_PASSWORD or ADMIN_PASSWORD_HASH),
         "reports_stored": len(REPORTS),
     })
@@ -1049,7 +875,7 @@ def report():
     report_obj["verdict"] = verdict
     report_obj["received_at"] = iso()
 
-    forwarded, note = forward_to_discord(check, report_obj, verdict)
+    delivered, note = deliver_to_admin_site(check, report_obj, verdict)
 
     record = {
         "id": check_id,
@@ -1058,7 +884,7 @@ def report():
         "used_at": check["used_at"],
         "report": report_obj,
         "verdict": verdict,
-        "forwarded": forwarded,
+        "forwarded": delivered,
         "delivery": note,
         "processing_s": round(now() - started, 2),
         # One-time token used by the client to push its file list (AnyDisk)
@@ -1075,14 +901,14 @@ def report():
             for k in list(REPORTS.keys())[:-2000]:
                 REPORTS.pop(k, None)
 
-    log.info("report %s discord_id=%.30s verdict=%s findings=%d forwarded=%s (%s) in %.2fs",
-             check_id, discord_id, verdict, len(report_obj["findings"]), forwarded, note,
+    log.info("report %s discord_id=%.30s verdict=%s findings=%d delivered=%s (%s) in %.2fs",
+             check_id, discord_id, verdict, len(report_obj["findings"]), delivered, note,
              now() - started)
 
     # A 200 tells the client its result reached the server. It is not a lie:
-    # the report is persisted even if the webhook is misconfigured, and the
-    # admin page shows the forwarding status. `check` + `inv_token` let the
-    # client upload its file list afterwards.
+    # the report is persisted in the archive, which the admin site's "Messages"
+    # feed reads. `check` + `inv_token` let the client upload its file list
+    # afterwards.
     return jsonify({"ok": True, "verdict": verdict, "discord_id": discord_id,
                     "check": check_id, "inv_token": record["inv_token"]})
 
@@ -1168,21 +994,6 @@ def harden(resp: Response) -> Response:
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     resp.headers.setdefault("Cache-Control", "no-store")
-    # Belt and braces: the webhook must never end up in a response body.
-    # Only small bodies are inspected, so the ~15 MB .exe download is not
-    # pulled into memory on every request.
-    if DISCORD_WEBHOOK_URL and not resp.direct_passthrough:
-        try:
-            length = int(resp.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if 0 < length < 1024 * 1024:
-            body = resp.get_data() or b""
-            if isinstance(body, bytes) and DISCORD_WEBHOOK_URL.encode() in body:
-                log.error("blocked a response that contained the webhook URL")
-                resp.set_data(b'{"ok":false,"error":"internal_error"}')
-                resp.status_code = 500
-                resp.headers["Content-Type"] = "application/json"
     return resp
 
 
@@ -1204,8 +1015,8 @@ if __name__ == "__main__":
     if missing:
         log.warning("Missing secret(s): %s - the admin page will not be usable",
                     ", ".join(missing))
-    if not DISCORD_WEBHOOK_URL:
-        log.warning("Missing secret DISCORD_WEBHOOK_URL - reports will be stored but not sent")
+    # Reports land in the admin site only; there is no external channel to
+    # warn about, so nothing else to check here.
     port = int(os.environ.get("PORT", "3000"))
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
 
